@@ -156,7 +156,8 @@ export default function CVMasterPro() {
   const [isAsking, setIsAsking] = useState(false)
   const [isGeneratingChips, setIsGeneratingChips] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
-  const manualEditorRef = useRef<HTMLTextAreaElement>(null)
+  const manualEditorRef = useRef<HTMLDivElement>(null)
+  const manualHtmlRef = useRef('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [optimizationMode, setOptimizationMode] = useState('finance')
   const [signals, setSignals] = useState<Signals>({
@@ -229,14 +230,21 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     if (!isManualEditing || !manualEditorRef.current) return
     const editor = manualEditorRef.current
     editor.focus()
-    const end = editor.value.length
-    editor.setSelectionRange(end, end)
+    const range = document.createRange()
+    range.selectNodeContents(editor)
+    range.collapse(false)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
   }, [isManualEditing])
 
   const handleTextSelection = () => {
     const selection = window.getSelection()
     const text = selection?.toString().trim()
-    if (text && previewRef.current && selection?.anchorNode && previewRef.current.contains(selection.anchorNode)) {
+    const isInPreview = previewRef.current && selection?.anchorNode && previewRef.current.contains(selection.anchorNode)
+    const isInManual = manualEditorRef.current && selection?.anchorNode && manualEditorRef.current.contains(selection.anchorNode)
+
+    if (text && (isInPreview || isInManual)) {
       setFloatingMenu((prev) => ({
         ...prev,
         visible: true,
@@ -254,23 +262,30 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
   const openManualEditor = () => {
     const activeDoc = activeTab === 'output' ? optimizedCv : coverLetter
-    setManualDraft(getProcessedText(activeDoc))
+    const html = renderPreviewHtml(getProcessedText(activeDoc))
+    setManualDraft(html)
+    manualHtmlRef.current = html
     setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
     setIsManualEditing(true)
   }
 
   const saveManualEdits = () => {
+    const html = manualEditorRef.current?.innerHTML || manualHtmlRef.current || manualDraft
+    const markdown = htmlToMarkdown(html)
     if (activeTab === 'output') {
-      setOptimizedCv(manualDraft)
+      setOptimizedCv(markdown)
     } else {
-      setCoverLetter(manualDraft)
+      setCoverLetter(markdown)
     }
     setIsManualEditing(false)
+    setManualDraft('')
+    manualHtmlRef.current = ''
   }
 
   const cancelManualEdits = () => {
     setIsManualEditing(false)
     setManualDraft('')
+    manualHtmlRef.current = ''
   }
 
   const handlePreviewTap = () => {
@@ -673,6 +688,81 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       .replace(/\n/g, '<br/>')
   }
 
+  const renderInlineMarkdown = (node: ChildNode): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || ''
+    if (node.nodeType !== Node.ELEMENT_NODE) return ''
+
+    const element = node as Element
+    const content = Array.from(element.childNodes).map(renderInlineMarkdown).join('')
+    const tag = element.tagName.toLowerCase()
+
+    if (tag === 'strong' || tag === 'b') return `**${content}**`
+    if (tag === 'em' || tag === 'i') return `*${content}*`
+    if (tag === 'br') return '\n'
+    return content
+  }
+
+  const htmlToMarkdown = (html: string) => {
+    if (typeof window === 'undefined') return html
+
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(`<div id="manual-root">${html}</div>`, 'text/html')
+    const root = doc.getElementById('manual-root')
+    if (!root) return ''
+
+    const lines: string[] = []
+
+    for (const node of Array.from(root.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = (node.textContent || '').trim()
+        if (text) lines.push(text)
+        continue
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) continue
+
+      const element = node as Element
+      const tag = element.tagName.toLowerCase()
+
+      if (tag === 'h1') {
+        lines.push(`# ${renderInlineMarkdown(element).trim()}`)
+        continue
+      }
+
+      if (tag === 'h2') {
+        lines.push(`## ${renderInlineMarkdown(element).trim()}`)
+        continue
+      }
+
+      if (tag === 'h3') {
+        lines.push(`### ${renderInlineMarkdown(element).trim()}`)
+        continue
+      }
+
+      if (tag === 'ul' || tag === 'ol') {
+        for (const li of Array.from(element.querySelectorAll('li'))) {
+          lines.push(`- ${renderInlineMarkdown(li).trim()}`)
+        }
+        continue
+      }
+
+      if (tag === 'li') {
+        lines.push(`- ${renderInlineMarkdown(element).trim()}`)
+        continue
+      }
+
+      if (tag === 'div' && element.children.length === 1 && element.firstElementChild?.tagName.toLowerCase() === 'h2') {
+        lines.push(`## ${renderInlineMarkdown(element.firstElementChild).trim()}`)
+        continue
+      }
+
+      const line = renderInlineMarkdown(element).trim()
+      if (line) lines.push(line)
+    }
+
+    return lines.join('\n\n').replace(/\n{3,}/g, '\n\n').trim()
+  }
+
   const getProcessedText = (text: string) => {
     if (!text) return ''
     return removeEmDashes ? text.replace(/—|–/g, '-') : text
@@ -961,18 +1051,21 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
               <div className="flex-1 overflow-y-auto p-8 bg-slate-100/50 shadow-inner relative group">
                 {isManualEditing ? (
-                  <textarea
+                  <div
                     ref={manualEditorRef}
-                    autoFocus
-                    value={manualDraft}
-                    onChange={(e) => setManualDraft(e.target.value)}
-                    onKeyDown={(e) => e.stopPropagation()}
-                    className="bg-white shadow-md mx-auto p-12 min-h-full h-full w-full border border-slate-200 text-black transition-all leading-normal resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    contentEditable
+                    suppressContentEditableWarning
+                    onMouseUp={handleTextSelection}
+                    onInput={(e) => {
+                      manualHtmlRef.current = (e.currentTarget as HTMLDivElement).innerHTML
+                    }}
+                    className="bg-white shadow-md mx-auto p-12 min-h-full h-full w-full border border-slate-200 text-black text-justify transition-all cursor-text selection:bg-blue-200/50 leading-normal focus:outline-none focus:ring-2 focus:ring-blue-200"
                     style={{
                       fontFamily: '"Times New Roman", serif',
                       fontSize: `${fontSize}pt`,
                       maxWidth: '8.5in'
                     }}
+                    dangerouslySetInnerHTML={{ __html: manualDraft }}
                   />
                 ) : (
                   <div
