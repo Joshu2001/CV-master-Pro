@@ -156,6 +156,7 @@ export default function CVMasterPro() {
   const [isAsking, setIsAsking] = useState(false)
   const [isGeneratingChips, setIsGeneratingChips] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
+  const manualEditorRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [optimizationMode, setOptimizationMode] = useState('finance')
   const [signals, setSignals] = useState<Signals>({
@@ -223,6 +224,14 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsManualEditing(false)
     setManualDraft('')
   }, [activeTab])
+
+  useEffect(() => {
+    if (!isManualEditing || !manualEditorRef.current) return
+    const editor = manualEditorRef.current
+    editor.focus()
+    const end = editor.value.length
+    editor.setSelectionRange(end, end)
+  }, [isManualEditing])
 
   const handleTextSelection = () => {
     const selection = window.getSelection()
@@ -946,16 +955,18 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   Remove Em-Dashes
                 </label>
                 <div className="text-[9px] text-blue-500 uppercase font-bold tracking-widest bg-blue-50 px-2.5 py-1 rounded-md hidden md:block border border-blue-100">
-                  Tap doc to edit. Select text for AI.
+                  Tap once to edit. Select text for AI.
                 </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 bg-slate-100/50 shadow-inner relative group">
                 {isManualEditing ? (
                   <textarea
+                    ref={manualEditorRef}
                     autoFocus
                     value={manualDraft}
                     onChange={(e) => setManualDraft(e.target.value)}
+                    onKeyDown={(e) => e.stopPropagation()}
                     className="bg-white shadow-md mx-auto p-12 min-h-full h-full w-full border border-slate-200 text-black transition-all leading-normal resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
                     style={{
                       fontFamily: '"Times New Roman", serif',
@@ -968,6 +979,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     ref={previewRef}
                     onMouseUp={handleTextSelection}
                     onClick={handlePreviewTap}
+                    onPointerUp={handlePreviewTap}
                     className="bg-white shadow-md mx-auto p-12 min-h-full border border-slate-200 text-black text-justify transition-all cursor-text selection:bg-blue-200/50 leading-normal"
                     style={{
                       fontFamily: '"Times New Roman", serif',
