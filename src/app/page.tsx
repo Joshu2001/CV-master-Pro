@@ -12,6 +12,7 @@ import {
   Check,
   RotateCcw,
   ChevronRight,
+  ChevronLeft,
   AlertCircle,
   Loader2,
   Upload,
@@ -144,6 +145,8 @@ export default function CVMasterPro() {
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
   const [isManualEditing, setIsManualEditing] = useState(false)
   const [manualDraft, setManualDraft] = useState('')
+  const [editHistory, setEditHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
   const [floatingMenu, setFloatingMenu] = useState<FloatingMenuState>({
     visible: false,
     text: '',
@@ -238,6 +241,23 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     selection?.addRange(range)
   }, [isManualEditing])
 
+  useEffect(() => {
+    if (!isManualEditing) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault()
+        handleUndo()
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+        e.preventDefault()
+        handleRedo()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isManualEditing, historyIndex, editHistory])
+
   const handleTextSelection = () => {
     const selection = window.getSelection()
     const text = selection?.toString().trim()
@@ -267,11 +287,23 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     manualHtmlRef.current = html
     setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
     setIsManualEditing(true)
+    // Initialize history when entering manual edit mode
+    setEditHistory([html])
+    setHistoryIndex(0)
   }
 
   const saveManualEdits = () => {
     const html = manualEditorRef.current?.innerHTML || manualHtmlRef.current || manualDraft
     const markdown = htmlToMarkdown(html)
+    
+    // Add to edit history when saving
+    setEditHistory((prev) => {
+      const newHistory = prev.slice(0, historyIndex + 1)
+      newHistory.push(html)
+      return newHistory
+    })
+    setHistoryIndex((prev) => prev + 1)
+    
     if (activeTab === 'output') {
       setOptimizedCv(markdown)
     } else {
@@ -280,6 +312,30 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsManualEditing(false)
     setManualDraft('')
     manualHtmlRef.current = ''
+    setEditHistory([])
+    setHistoryIndex(-1)
+  }
+
+  const handleUndo = () => {
+    if (historyIndex <= 0) return
+    const newIndex = historyIndex - 1
+    setHistoryIndex(newIndex)
+    setManualDraft(editHistory[newIndex])
+    manualHtmlRef.current = editHistory[newIndex]
+    if (manualEditorRef.current) {
+      manualEditorRef.current.innerHTML = editHistory[newIndex]
+    }
+  }
+
+  const handleRedo = () => {
+    if (historyIndex >= editHistory.length - 1) return
+    const newIndex = historyIndex + 1
+    setHistoryIndex(newIndex)
+    setManualDraft(editHistory[newIndex])
+    manualHtmlRef.current = editHistory[newIndex]
+    if (manualEditorRef.current) {
+      manualEditorRef.current.innerHTML = editHistory[newIndex]
+    }
   }
 
   const cancelManualEdits = () => {
@@ -987,6 +1043,26 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   >
                     {isPreviewExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                   </button>
+                  {isManualEditing && (
+                    <>
+                      <button
+                        onClick={handleUndo}
+                        disabled={historyIndex <= 0}
+                        className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 disabled:text-slate-300 disabled:hover:bg-white transition-all shadow-sm"
+                        title="Undo (Ctrl+Z)"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={handleRedo}
+                        disabled={historyIndex >= editHistory.length - 1}
+                        className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 disabled:text-slate-300 disabled:hover:bg-white transition-all shadow-sm"
+                        title="Redo (Ctrl+Y)"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
                   {(activeTab === 'output' || activeTab === 'coverletter') && (
                     <button
                       onClick={() => (isManualEditing ? saveManualEdits() : openManualEditor())}
