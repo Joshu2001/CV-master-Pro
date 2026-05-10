@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { initializeApp } from 'firebase/app'
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth'
-import { getFirestore, collection, addDoc, onSnapshot, query, deleteDoc, serverTimestamp } from 'firebase/firestore'
+import { getFirestore, collection, addDoc, onSnapshot, query, deleteDoc, doc, serverTimestamp } from 'firebase/firestore'
 import {
   FileText,
   Briefcase,
@@ -378,9 +378,9 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
   const deleteProfile = async (e: React.MouseEvent, profileId: string) => {
     e.stopPropagation()
-    if (!db) return
+    if (!db || !user) return
     try {
-      await deleteDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'profiles').doc(profileId) as any)
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'profiles', profileId))
     } catch (err) {
       setError('Delete failed.')
     }
