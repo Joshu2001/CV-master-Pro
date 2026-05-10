@@ -142,6 +142,8 @@ export default function CVMasterPro() {
   const [isSaving, setIsSaving] = useState(false)
   const [removeEmDashes, setRemoveEmDashes] = useState(false)
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
+  const [isManualEditing, setIsManualEditing] = useState(false)
+  const [manualDraft, setManualDraft] = useState('')
   const [floatingMenu, setFloatingMenu] = useState<FloatingMenuState>({
     visible: false,
     text: '',
@@ -217,6 +219,11 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     loadScript('https://cdn.jsdelivr.net/npm/docx@7.8.2/build/index.min.js')
   }, [])
 
+  useEffect(() => {
+    setIsManualEditing(false)
+    setManualDraft('')
+  }, [activeTab])
+
   const handleTextSelection = () => {
     const selection = window.getSelection()
     const text = selection?.toString().trim()
@@ -234,6 +241,34 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const handleContextualAction = () => {
     if (floatingMenu.mode === 'edit') applyContextualEdit()
     else if (floatingMenu.mode === 'ask') askContextualQuestion()
+  }
+
+  const openManualEditor = () => {
+    const activeDoc = activeTab === 'output' ? optimizedCv : coverLetter
+    setManualDraft(getProcessedText(activeDoc))
+    setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
+    setIsManualEditing(true)
+  }
+
+  const saveManualEdits = () => {
+    if (activeTab === 'output') {
+      setOptimizedCv(manualDraft)
+    } else {
+      setCoverLetter(manualDraft)
+    }
+    setIsManualEditing(false)
+  }
+
+  const cancelManualEdits = () => {
+    setIsManualEditing(false)
+    setManualDraft('')
+  }
+
+  const handlePreviewTap = () => {
+    if (isManualEditing) return
+    const selectionText = window.getSelection()?.toString().trim()
+    if (selectionText) return
+    openManualEditor()
   }
 
   const generateEmphasizeChips = async () => {
@@ -659,7 +694,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         </div>
       </header>
 
-      <main className={`mx-auto px-6 py-8 grid grid-cols-1 ${isPreviewExpanded ? 'lg:grid-cols-1 max-w-[1600px]' : 'lg:grid-cols-12 max-w-7xl'} gap-8 relative transition-all duration-300 ease-in-out`}>
+      <main className={`mx-auto grid grid-cols-1 ${isPreviewExpanded ? 'max-w-none px-0 py-0' : 'lg:grid-cols-12 max-w-7xl px-6 py-8'} gap-8 relative transition-all duration-300 ease-in-out`}>
         {!isPreviewExpanded && (
         <div className="lg:col-span-4 space-y-6">
           {error && (
@@ -797,7 +832,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         </div>
         )}
 
-        <div className={`${isPreviewExpanded ? 'lg:col-span-12' : 'lg:col-span-8'} h-[calc(100vh-140px)] sticky top-24 flex flex-col relative transition-all duration-300 ease-in-out`}>
+        <div className={`${isPreviewExpanded ? 'fixed inset-x-0 top-16 bottom-0 z-50 p-6 bg-slate-100/95 backdrop-blur-sm' : 'lg:col-span-8 h-[calc(100vh-140px)] sticky top-24'} flex flex-col relative transition-all duration-300 ease-in-out`}>
           <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-200 text-[10px] font-bold uppercase mb-4 shrink-0">
             <button
               onClick={() => setActiveTab('output')}
@@ -851,6 +886,22 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   >
                     {isPreviewExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                   </button>
+                  {(activeTab === 'output' || activeTab === 'coverletter') && (
+                    <button
+                      onClick={() => (isManualEditing ? saveManualEdits() : openManualEditor())}
+                      className="px-3 py-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-700 transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide"
+                    >
+                      {isManualEditing ? 'Save Manual Edit' : 'Manual Edit'}
+                    </button>
+                  )}
+                  {isManualEditing && (
+                    <button
+                      onClick={cancelManualEdits}
+                      className="px-3 py-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-700 transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide"
+                    >
+                      Cancel
+                    </button>
+                  )}
                   <button
                     onClick={saveCurrentProfile}
                     className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm"
@@ -895,28 +946,43 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   Remove Em-Dashes
                 </label>
                 <div className="text-[9px] text-blue-500 uppercase font-bold tracking-widest bg-blue-50 px-2.5 py-1 rounded-md hidden md:block border border-blue-100">
-                  Select text to edit
+                  Tap doc to edit. Select text for AI.
                 </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-8 bg-slate-100/50 shadow-inner relative group">
-                <div
-                  ref={previewRef}
-                  onMouseUp={handleTextSelection}
-                  className="bg-white shadow-md mx-auto p-12 min-h-full border border-slate-200 text-black text-justify transition-all cursor-text selection:bg-blue-200/50 leading-normal"
-                  style={{
-                    fontFamily: '"Times New Roman", serif',
-                    fontSize: `${fontSize}pt`,
-                    maxWidth: '8.5in'
-                  }}
-                  dangerouslySetInnerHTML={{
-                    __html: renderPreviewHtml(
-                      activeTab === 'output'
-                        ? getProcessedText(optimizedCv)
-                        : getProcessedText(coverLetter) || 'Generate Cover Letter to view...'
-                    )
-                  }}
-                />
+                {isManualEditing ? (
+                  <textarea
+                    autoFocus
+                    value={manualDraft}
+                    onChange={(e) => setManualDraft(e.target.value)}
+                    className="bg-white shadow-md mx-auto p-12 min-h-full h-full w-full border border-slate-200 text-black transition-all leading-normal resize-none focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    style={{
+                      fontFamily: '"Times New Roman", serif',
+                      fontSize: `${fontSize}pt`,
+                      maxWidth: '8.5in'
+                    }}
+                  />
+                ) : (
+                  <div
+                    ref={previewRef}
+                    onMouseUp={handleTextSelection}
+                    onClick={handlePreviewTap}
+                    className="bg-white shadow-md mx-auto p-12 min-h-full border border-slate-200 text-black text-justify transition-all cursor-text selection:bg-blue-200/50 leading-normal"
+                    style={{
+                      fontFamily: '"Times New Roman", serif',
+                      fontSize: `${fontSize}pt`,
+                      maxWidth: '8.5in'
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: renderPreviewHtml(
+                        activeTab === 'output'
+                          ? getProcessedText(optimizedCv)
+                          : getProcessedText(coverLetter) || 'Generate Cover Letter to view...'
+                      )
+                    }}
+                  />
+                )}
 
                 {activeTab === 'coverletter' && !coverLetter && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-10 p-12 text-center animate-in fade-in">
