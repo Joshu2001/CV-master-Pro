@@ -23,7 +23,6 @@ import {
   BookOpen,
   Lightbulb,
   Zap,
-  MousePointerSquareDashed,
   Save,
   History,
   Trash2,
@@ -114,6 +113,8 @@ interface PortfolioStrategy {
     reasoning: string
   }
 }
+
+const signalFieldKeys = ['gpa', 'testScores', 'cfaStatus'] as const
 
 export default function CVMasterPro() {
   const [user, setUser] = useState<any>(null)
@@ -726,7 +727,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
           <div className="bg-slate-900 text-white rounded-[2rem] p-8 shadow-2xl space-y-8 border border-slate-800">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {['gpa', 'testScores', 'cfaStatus'].map((k) => (
+              {signalFieldKeys.map((k) => (
                 <div key={k}>
                   <label className="text-[10px] uppercase font-black text-slate-500 block mb-2 tracking-widest">
                     {k.replace(/([A-Z])/g, ' $1')}
@@ -734,7 +735,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   <input
                     type="text"
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-                    value={signals[k as keyof Signals]}
+                    value={signals[k]}
                     onChange={(e) =>
                       setSignals({
                         ...signals,
