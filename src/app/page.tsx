@@ -34,7 +34,9 @@ import {
   Target,
   FileSignature,
   Layers,
-  Sparkles
+  Sparkles,
+  Maximize2,
+  Minimize2
 } from 'lucide-react'
 
 // Firebase configuration
@@ -139,6 +141,7 @@ export default function CVMasterPro() {
   const [savedProfiles, setSavedProfiles] = useState<Profile[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const [removeEmDashes, setRemoveEmDashes] = useState(false)
+  const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
   const [floatingMenu, setFloatingMenu] = useState<FloatingMenuState>({
     visible: false,
     text: '',
@@ -632,40 +635,42 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 font-sans selection:bg-indigo-100 relative">
-      <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-xl px-6 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.14),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(148,163,184,0.18),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_45%,_#f8fafc_100%)] text-slate-900 font-sans selection:bg-blue-100 relative">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)] bg-[size:72px_72px] opacity-40" />
+      <header className="bg-zinc-950/95 backdrop-blur border-b border-zinc-800 sticky top-0 z-40 shadow-md px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-600 p-2 rounded-lg shadow-indigo-600/30">
+          <div className="bg-blue-600 p-2 rounded-lg shadow-inner shadow-blue-950/40">
             <ShieldCheck className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="font-bold text-lg text-white">
-              CV Master <span className="text-indigo-400 font-black">PRO</span>
+            <h1 className="font-bold text-lg text-white tracking-tight">
+              CV Master <span className="text-blue-400 font-black">PRO</span>
             </h1>
-            <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">High-Stakes Recruitment Suite</p>
+            <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">High-Stakes Recruitment Suite</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
           {user && savedProfiles.length > 0 && (
-            <div className="text-[10px] text-slate-400 font-bold bg-slate-800 px-3 py-1 rounded-full">
-              <History className="w-3 h-3 inline mr-1" />
+            <div className="text-[10px] text-zinc-400 font-bold bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-full flex items-center gap-1.5">
+              <History className="w-3 h-3" />
               {savedProfiles.length} Readiness Points
             </div>
           )}
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8 relative">
-        <div className="lg:col-span-7 space-y-6">
+      <main className={`mx-auto px-6 py-8 grid grid-cols-1 ${isPreviewExpanded ? 'lg:grid-cols-1 max-w-[1600px]' : 'lg:grid-cols-12 max-w-7xl'} gap-8 relative transition-all duration-300 ease-in-out`}>
+        {!isPreviewExpanded && (
+        <div className="lg:col-span-4 space-y-6">
           {error && (
             <div className="bg-rose-50 border border-rose-100 text-rose-600 p-4 rounded-xl flex items-center gap-3 text-sm font-bold animate-in zoom-in-95">
-              <AlertCircle className="w-5 h-5" /> {error}
+              <AlertCircle className="w-5 h-5 flex-shrink-0" /> {error}
             </div>
           )}
 
           {savedProfiles.length > 0 && (
-            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm">
-              <div className="flex items-center gap-2 mb-3 text-[10px] font-black uppercase text-slate-400 tracking-widest px-1">
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-2 mb-3 text-[10px] font-bold uppercase text-slate-500 tracking-widest px-1">
                 <Layers className="w-3.5 h-3.5" /> Starting Point Library
               </div>
               <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
@@ -673,16 +678,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   <div
                     key={p.id}
                     onClick={() => loadProfile(p)}
-                    className="flex-shrink-0 w-44 p-3 rounded-2xl border border-slate-100 bg-slate-50 hover:bg-indigo-50 cursor-pointer relative group transition-all"
+                    className="flex-shrink-0 w-44 p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-blue-50 hover:border-blue-200 cursor-pointer relative group transition-all"
                   >
                     <h4 className="text-[11px] font-bold text-slate-800 truncate pr-4">{p.name}</h4>
                     <button
                       onClick={(e) => {
                         deleteProfile(e, p.id)
                       }}
-                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white rounded-full p-1 border border-slate-200"
                     >
-                      <Trash2 className="w-3 h-3 text-rose-400" />
+                      <Trash2 className="w-3 h-3 text-rose-500" />
                     </button>
                   </div>
                 ))}
@@ -690,16 +695,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             </div>
           )}
 
-          <div className="bg-slate-900 text-white rounded-[2rem] p-8 shadow-2xl space-y-8 border border-slate-800">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-zinc-900 text-white rounded-xl p-6 shadow-lg border border-zinc-800 space-y-6">
+            <div className="grid grid-cols-1 gap-4">
               {signalFieldKeys.map((k) => (
                 <div key={k}>
-                  <label className="text-[10px] uppercase font-black text-slate-500 block mb-2 tracking-widest">
+                  <label className="text-[10px] uppercase font-bold text-zinc-400 block mb-1.5 tracking-wider">
                     {k.replace(/([A-Z])/g, ' $1')}
                   </label>
                   <input
                     type="text"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-blue-100 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                     value={signals[k]}
                     onChange={(e) =>
                       setSignals({
@@ -711,12 +716,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                 </div>
               ))}
             </div>
-            <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700">
-              <div className="flex items-center gap-2 mb-4 text-[10px] font-black uppercase text-indigo-400 tracking-widest">
-                <BookOpen className="w-4 h-4" /> Strategic Philosophy & Structure (Editable)
+            <div className="bg-zinc-950/50 rounded-lg p-4 border border-zinc-800">
+              <div className="flex items-center gap-2 mb-3 text-[10px] font-bold uppercase text-blue-400 tracking-widest">
+                <BookOpen className="w-3.5 h-3.5" /> Strategic Philosophy
               </div>
               <textarea
-                className="w-full h-40 bg-transparent text-[12px] font-mono leading-relaxed focus:outline-none text-slate-200 resize-none"
+                className="w-full h-32 bg-transparent text-[11px] font-mono leading-relaxed focus:outline-none text-zinc-300 resize-none"
                 value={signals.structureInstructions}
                 onChange={(e) =>
                   setSignals({
@@ -729,16 +734,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             </div>
           </div>
 
-          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-2 font-black text-slate-800 text-[11px] uppercase tracking-widest">
-                <FileText className="w-4 h-4 text-indigo-600" /> Source CV Data
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+              <div className="flex items-center gap-2 font-bold text-slate-700 text-xs tracking-tight">
+                <FileText className="w-4 h-4 text-blue-600" /> Source CV Data
               </div>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="px-5 py-2.5 bg-indigo-600 text-white rounded-2xl text-[11px] font-black hover:bg-indigo-700 shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95"
+                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-[10px] font-bold hover:bg-slate-50 hover:text-blue-600 shadow-sm flex items-center gap-1.5 transition-all"
               >
-                <Upload className="w-4 h-4" /> Upload Files/Screenshots
+                <Upload className="w-3 h-3" /> Upload Files
               </button>
               <input
                 ref={fileInputRef}
@@ -751,32 +756,32 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             </div>
             <textarea
               onPaste={handlePaste}
-              className="w-full h-80 p-8 text-sm font-mono focus:outline-none bg-transparent placeholder:text-slate-300 transition-all focus:bg-white resize-none leading-relaxed"
+              className="w-full h-48 p-5 text-xs font-mono focus:outline-none bg-transparent placeholder:text-slate-400 transition-all focus:bg-slate-50/50 resize-none leading-relaxed"
               placeholder="Paste text or snapshots here. AI automatically OCRs and bridges your data..."
               value={cvText}
               onChange={(e) => setCvText(e.target.value)}
             />
           </div>
 
-          <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50 font-black text-slate-800 text-[11px] uppercase tracking-widest">
-              <Target className="w-4 h-4 text-indigo-600" /> Target Job Profile
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center gap-2 bg-slate-50/80 font-bold text-slate-700 text-xs tracking-tight">
+              <Target className="w-4 h-4 text-blue-600" /> Target Job Profile
             </div>
             <textarea
-              className="w-full h-40 p-8 text-sm focus:outline-none bg-transparent placeholder:text-slate-300"
+              className="w-full h-32 p-5 text-xs focus:outline-none bg-transparent placeholder:text-slate-400 resize-none"
               placeholder="Paste JD..."
               value={jobDescription}
               onChange={(e) => setJobDescription(e.target.value)}
             />
           </div>
 
-          <div className="flex gap-4">
+          <div className="flex flex-col gap-3 pb-8">
             <button
               onClick={generateTailoredCV}
               disabled={isGenerating || !cvText || !jobDescription}
-              className="flex-1 py-6 rounded-[2rem] bg-indigo-600 text-white font-black uppercase text-xs tracking-[0.2em] shadow-2xl hover:bg-indigo-700 disabled:bg-slate-200 flex items-center justify-center gap-3 transition-all active:translate-y-1"
+              className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 transition-all"
             >
-              {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />} Rewrite My CV & Score Fit
+              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />} Rewrite CV & Score Fit
             </button>
             <button
               onClick={() => {
@@ -784,20 +789,21 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                 generatePortfolioStrategy()
               }}
               disabled={isStrategizing || !cvText || !jobDescription}
-              className="px-10 py-6 rounded-[2rem] bg-slate-900 text-white font-black uppercase text-xs tracking-widest shadow-2xl hover:bg-black disabled:bg-slate-200 flex items-center justify-center transition-all active:translate-y-1"
+              className="w-full py-4 rounded-xl bg-zinc-900 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-zinc-800 disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 transition-all"
             >
-              {isStrategizing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lightbulb className="w-5 h-5" />}
+              {isStrategizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lightbulb className="w-4 h-4" />} Analyze Portfolio Strategy
             </button>
           </div>
         </div>
+        )}
 
-        <div className="lg:col-span-5 space-y-4 h-[calc(100vh-140px)] sticky top-24 flex flex-col relative">
-          <div className="flex bg-slate-200/50 p-1.5 rounded-[1.5rem] border border-slate-200 text-[10px] font-black uppercase">
+        <div className={`${isPreviewExpanded ? 'lg:col-span-12' : 'lg:col-span-8'} h-[calc(100vh-140px)] sticky top-24 flex flex-col relative transition-all duration-300 ease-in-out`}>
+          <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-200 text-[10px] font-bold uppercase mb-4 shrink-0">
             <button
               onClick={() => setActiveTab('output')}
               disabled={!optimizedCv}
               className={`flex-1 py-3 rounded-2xl transition-all ${
-                activeTab === 'output' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'
+                activeTab === 'output' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               CV Preview
@@ -806,7 +812,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
               onClick={() => setActiveTab('coverletter')}
               disabled={!optimizedCv}
               className={`flex-1 py-3 rounded-2xl transition-all ${
-                activeTab === 'coverletter' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'
+                activeTab === 'coverletter' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               Cover Letter
@@ -815,7 +821,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
               onClick={() => setActiveTab('portfolio')}
               disabled={!portfolioStrategy}
               className={`flex-1 py-3 rounded-2xl transition-all ${
-                activeTab === 'portfolio' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'
+                activeTab === 'portfolio' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}
             >
               Tiered Strategy
@@ -823,24 +829,31 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           </div>
 
           {(activeTab === 'output' || activeTab === 'coverletter') && optimizedCv && (
-            <div className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl overflow-hidden flex flex-col h-full relative">
-              <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-md overflow-hidden flex flex-col h-full relative">
+              <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
                 {activeTab === 'output' && fitAnalysis && (
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full border-2 border-indigo-100 flex items-center justify-center relative">
-                      <span className="text-[11px] font-black text-indigo-600">{fitAnalysis.score}%</span>
+                    <div className="w-8 h-8 rounded-full border border-blue-200 flex items-center justify-center relative bg-white">
+                      <span className="text-[10px] font-black text-blue-700">{fitAnalysis.score}%</span>
                       <div
-                        className="absolute inset-0 rounded-full border-2 border-indigo-600 transition-all duration-1000"
+                        className="absolute inset-0 rounded-full border-2 border-blue-600 transition-all duration-1000"
                         style={{ clipPath: `inset(0 ${100 - fitAnalysis.score}% 0 0)` }}
                       ></div>
                     </div>
-                    <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">Fit Analysis</div>
+                    <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none">Fit Analysis</div>
                   </div>
                 )}
-                <div className="flex gap-2 ml-auto">
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
+                    className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm"
+                    title={isPreviewExpanded ? 'Minimize' : 'Expand Fullscreen'}
+                  >
+                    {isPreviewExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  </button>
                   <button
                     onClick={saveCurrentProfile}
-                    className="p-3 hover:bg-slate-100 rounded-2xl text-slate-600 transition-all active:scale-95 shadow-sm border border-slate-100 flex items-center justify-center"
+                    className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm"
                   >
                     <Save className="w-4 h-4" />
                   </button>
@@ -851,15 +864,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                         activeTab === 'output' ? 'Ready_Resume' : 'Ready_Letter'
                       )
                     }
-                    className="flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-2xl text-[10px] font-black shadow-xl hover:bg-black transition-all active:scale-95"
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-[10px] font-bold shadow-sm hover:bg-blue-700 transition-all"
                   >
                     <FileDown className="w-4 h-4" /> .DOCX
                   </button>
                 </div>
               </div>
 
-              <div className="px-6 py-3 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-6">
-                <div className="flex items-center gap-3 flex-1">
+              <div className="px-5 py-2.5 bg-white border-b border-slate-200 flex items-center justify-between gap-6 shrink-0">
+                <div className="flex items-center gap-3 flex-1 max-w-xs">
                   <Type className="w-3.5 h-3.5 text-slate-400" />
                   <input
                     type="range"
@@ -868,29 +881,29 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     step="0.5"
                     value={fontSize}
                     onChange={(e) => setFontSize(parseFloat(e.target.value))}
-                    className="flex-1 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                    className="flex-1 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                   />
-                  <span className="text-[10px] font-black text-slate-600 w-8 text-right">{fontSize}pt</span>
+                  <span className="text-[10px] font-bold text-slate-600 w-8 text-right">{fontSize}pt</span>
                 </div>
-                <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-500 uppercase hover:text-slate-700">
+                <label className="flex items-center gap-2 cursor-pointer text-[10px] font-bold text-slate-600 uppercase hover:text-slate-800">
                   <input
                     type="checkbox"
                     checked={removeEmDashes}
                     onChange={(e) => setRemoveEmDashes(e.target.checked)}
-                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
                   />
-                  Remove Em-Dashes (—)
+                  Remove Em-Dashes
                 </label>
-                <div className="text-[8px] text-indigo-400 uppercase font-black tracking-widest border border-indigo-100 px-2 py-1 rounded-full animate-pulse hidden md:block">
+                <div className="text-[9px] text-blue-500 uppercase font-bold tracking-widest bg-blue-50 px-2.5 py-1 rounded-md hidden md:block border border-blue-100">
                   Select text to edit
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-12 bg-slate-50/50 shadow-inner relative group">
+              <div className="flex-1 overflow-y-auto p-8 bg-slate-100/50 shadow-inner relative group">
                 <div
                   ref={previewRef}
                   onMouseUp={handleTextSelection}
-                  className="bg-white shadow-2xl mx-auto p-12 min-h-full border border-slate-100 text-black text-justify transition-all cursor-text selection:bg-indigo-200 leading-normal"
+                  className="bg-white shadow-md mx-auto p-12 min-h-full border border-slate-200 text-black text-justify transition-all cursor-text selection:bg-blue-200/50 leading-normal"
                   style={{
                     fontFamily: '"Times New Roman", serif',
                     fontSize: `${fontSize}pt`,
@@ -906,44 +919,44 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                 />
 
                 {activeTab === 'coverletter' && !coverLetter && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 backdrop-blur-sm z-10 p-12 text-center animate-in fade-in">
-                    <FileSignature className="w-16 h-16 text-slate-200 mb-6" />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-10 p-12 text-center animate-in fade-in">
+                    <FileSignature className="w-12 h-12 text-slate-300 mb-4" />
                     <button
                       onClick={() => {
                         generateCoverLetter()
                       }}
                       disabled={isGeneratingLetter}
-                      className="px-8 py-4 bg-slate-900 text-white rounded-[1.5rem] font-black uppercase text-[10px] tracking-[0.2em] shadow-2xl flex items-center justify-center gap-3 transition-all hover:scale-105 active:scale-95"
+                      className="px-6 py-3 bg-zinc-900 text-white rounded-xl font-bold uppercase text-[10px] tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all hover:bg-zinc-800"
                     >
-                      {isGeneratingLetter ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />} Draft Cover Letter
+                      {isGeneratingLetter ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Draft Cover Letter
                     </button>
                   </div>
                 )}
 
                 {floatingMenu.visible && (
-                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-11/12 max-w-sm bg-slate-900 border border-slate-700 shadow-[0_32px_64px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] p-5 animate-in slide-in-from-bottom-8 z-50">
-                    <div className="flex items-center justify-between mb-4 border-b border-slate-700 pb-3 px-1">
-                      <div className="flex gap-4">
+                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-11/12 max-w-md bg-white border border-slate-200 shadow-[0_20px_40px_-10px_rgba(0,0,0,0.15)] rounded-2xl p-4 animate-in slide-in-from-bottom-6 z-50">
+                    <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3 px-1">
+                      <div className="flex gap-2">
                         <button
                           onClick={() => setFloatingMenu((prev) => ({ ...prev, mode: 'edit' }))}
-                          className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.1em] transition-all ${
-                            floatingMenu.mode === 'edit' ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'
+                          className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md transition-all ${
+                            floatingMenu.mode === 'edit' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'
                           }`}
                         >
                           <Edit3 className="w-3.5 h-3.5" /> Edit
                         </button>
                         <button
                           onClick={() => setFloatingMenu((prev) => ({ ...prev, mode: 'ask' }))}
-                          className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.1em] transition-all ${
-                            floatingMenu.mode === 'ask' ? 'text-emerald-400' : 'text-slate-500 hover:text-slate-300'
+                          className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md transition-all ${
+                            floatingMenu.mode === 'ask' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'
                           }`}
                         >
                           <MessageSquare className="w-3.5 h-3.5" /> Ask
                         </button>
                         <button
                           onClick={generateEmphasizeChips}
-                          className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.1em] transition-all ${
-                            floatingMenu.mode === 'emphasize' ? 'text-amber-400' : 'text-slate-500 hover:text-slate-300'
+                          className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md transition-all ${
+                            floatingMenu.mode === 'emphasize' ? 'bg-amber-50 text-amber-700' : 'text-slate-500 hover:bg-slate-50'
                           }`}
                         >
                           <Sparkles className="w-3.5 h-3.5" /> Emphasize
@@ -960,25 +973,25 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                             chips: []
                           })
                         }
-                        className="text-slate-500 hover:text-white transition-colors"
+                        className="text-slate-400 hover:text-slate-600 transition-colors p-1"
                       >
                         <X className="w-4 h-4" />
                       </button>
                     </div>
 
                     {floatingMenu.mode === 'emphasize' && (
-                      <div className="mb-4">
+                      <div className="mb-3">
                         {isGeneratingChips ? (
-                          <div className="flex items-center gap-2 text-xs text-slate-400 italic px-2 py-1">
+                          <div className="flex items-center gap-2 text-xs text-slate-500 italic px-2">
                             <Loader2 className="w-3 h-3 animate-spin" /> Mining strategic angles...
                           </div>
                         ) : (
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap gap-1.5">
                             {floatingMenu.chips?.map((chip, idx) => (
                               <button
                                 key={idx}
                                 onClick={() => applyContextualEdit(chip)}
-                                className="px-3 py-1.5 bg-amber-500/20 text-amber-300 hover:bg-amber-500/40 border border-amber-500/30 rounded-xl text-[11px] font-bold transition-all text-left"
+                                className="px-2.5 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-[10px] font-bold transition-all text-left"
                               >
                                 {chip}
                               </button>
@@ -989,7 +1002,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     )}
 
                     {floatingMenu.mode === 'ask' && floatingMenu.chatResponse && (
-                      <div className="mb-4 bg-slate-800 rounded-2xl p-4 text-xs text-slate-200 border border-slate-700 shadow-inner leading-relaxed animate-in fade-in slide-in-from-top-2">
+                      <div className="mb-3 bg-slate-50 rounded-xl p-3 text-xs text-slate-700 border border-slate-200 shadow-sm leading-relaxed">
                         {floatingMenu.chatResponse}
                       </div>
                     )}
@@ -998,7 +1011,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                       <div className="flex gap-2">
                         <input
                           autoFocus
-                          className="flex-1 bg-slate-800 border border-slate-700 text-white rounded-2xl px-4 py-3 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder:text-slate-600 shadow-inner"
+                          className="flex-1 bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-400"
                           placeholder={floatingMenu.mode === 'edit' ? 'Instructions...' : 'Ask recruiter...'}
                           value={floatingMenu.prompt}
                           onChange={(e) => setFloatingMenu((prev) => ({ ...prev, prompt: e.target.value }))}
@@ -1007,10 +1020,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                         <button
                           onClick={handleContextualAction}
                           className={`${
-                            floatingMenu.mode === 'edit' ? 'bg-indigo-600' : 'bg-emerald-600'
-                          } p-3 rounded-2xl text-white shadow-lg active:scale-95 transition-all flex items-center justify-center`}
+                            floatingMenu.mode === 'edit' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                          } p-2 rounded-xl text-white shadow-sm transition-all flex items-center justify-center`}
                         >
-                          {floatingMenu.mode === 'edit' ? isEditingSelection : isAsking ? (
+                          {(floatingMenu.mode === 'edit' ? isEditingSelection : isAsking) ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                           ) : (
                             <Send className="w-4 h-4" />
@@ -1025,21 +1038,21 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           )}
 
           {activeTab === 'portfolio' && portfolioStrategy && (
-            <div className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl h-full p-10 overflow-y-auto space-y-10 animate-in slide-in-from-right-8">
-              <div className="flex items-center gap-3 pb-6 border-b border-slate-100">
-                <Zap className="w-8 h-8 text-amber-500 fill-amber-500" />
-                <h2 className="font-black text-slate-900 uppercase tracking-tighter text-xl">Prestige Strategy Guide</h2>
+            <div className="bg-white rounded-xl border border-slate-200 shadow-md h-full p-8 overflow-y-auto space-y-8 animate-in slide-in-from-right-4">
+              <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
+                <Zap className="w-5 h-5 text-amber-500 fill-amber-500" />
+                <h2 className="font-black text-slate-800 uppercase tracking-tight text-lg">Prestige Strategy Guide</h2>
               </div>
-              <div className="space-y-6">
+              <div className="space-y-4">
                 {(Array.isArray(portfolioStrategy.projects) ? portfolioStrategy.projects : []).map((p, i) => (
-                  <div key={i} className="border border-slate-100 rounded-[2rem] p-8 bg-white shadow-sm hover:shadow-2xl transition-all group">
-                    <span className="text-[9px] font-black px-4 py-1.5 rounded-full bg-slate-900 text-white uppercase tracking-[0.2em] mb-4 inline-block">
+                  <div key={i} className="border border-slate-200 rounded-xl p-6 bg-slate-50 shadow-sm hover:shadow-md transition-all group">
+                    <span className="text-[9px] font-bold px-3 py-1 rounded-md bg-zinc-900 text-white uppercase tracking-widest mb-3 inline-block">
                       {String(p.tier)}
                     </span>
-                    <h4 className="font-black text-slate-800 text-base mb-3 group-hover:text-indigo-600 transition-colors">{String(p.title)}</h4>
-                    <p className="text-xs text-slate-500 mb-6 leading-relaxed">{String(p.description)}</p>
-                    <div className="text-[10px] font-black text-indigo-600 border-t border-slate-50 pt-5 uppercase flex items-center gap-2">
-                      <TrendingUp className="w-3 h-3" /> READINESS SIGNAL: <span className="text-slate-800 font-bold">{String(p.outcomeGoal)}</span>
+                    <h4 className="font-bold text-slate-800 text-sm mb-2">{String(p.title)}</h4>
+                    <p className="text-xs text-slate-600 mb-4 leading-relaxed">{String(p.description)}</p>
+                    <div className="text-[10px] font-bold text-blue-600 border-t border-slate-200 pt-3 uppercase flex items-center gap-1.5">
+                      <TrendingUp className="w-3 h-3" /> Readiness Signal: <span className="text-slate-800">{String(p.outcomeGoal)}</span>
                     </div>
                   </div>
                 ))}
@@ -1048,9 +1061,9 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           )}
 
           {!optimizedCv && (
-            <div className="h-full flex flex-col items-center justify-center bg-white rounded-[3rem] border-2 border-dashed border-slate-200 text-slate-400 px-16 text-center shadow-inner">
-              <Target className="w-20 h-16 text-slate-200 mb-8" />
-              <h3 className="font-black text-slate-800 text-xl mb-4 uppercase tracking-[0.2em]">Target Locked</h3>
+            <div className="h-full flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200 text-slate-400 p-8 text-center shadow-sm">
+              <Target className="w-12 h-12 text-slate-300 mb-4" />
+              <h3 className="font-bold text-slate-700 text-lg mb-2">Target Locked</h3>
               <p className="text-xs text-slate-500 leading-relaxed max-w-sm">Paste your target job and raw CV data to calculate high-prestige alignment.</p>
             </div>
           )}
