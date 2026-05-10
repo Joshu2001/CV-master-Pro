@@ -677,13 +677,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const renderPreviewHtml = (markdown: string) => {
     if (!markdown) return ''
     return markdown
-      .replace(/^# (.*$)/gim, '<h1 class="text-center font-bold uppercase border-b-2 border-black mb-6 pb-1 text-[1.2em]"> $1 </h1>')
-      .replace(/^## (.*$)/gim, '<div class="mt-6 mb-3 border-b border-black"><h2 class="font-bold uppercase tracking-tight text-[1.05em]"> $1 </h2></div>')
-      .replace(/^### (.*$)/gim, '<h3 class="font-bold mt-4 mb-1 text-[1em]"> $1 </h3>')
+      .replace(/^\s*###\s+(.*$)/gim, '<h3 class="font-bold mt-4 mb-1 text-[1em]">$1</h3>')
+      .replace(/^\s*##\s+(.*$)/gim, '<div class="mt-6 mb-3 border-b border-black"><h2 class="font-bold uppercase tracking-tight text-[1.05em]">$1</h2></div>')
+      .replace(/^\s*#\s+(.*$)/gim, '<h1 class="text-center font-bold uppercase border-b-2 border-black mb-6 pb-1 text-[1.2em]">$1</h1>')
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/^\* (.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400"> $1 </li>')
-      .replace(/^- (.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400"> $1 </li>')
+      .replace(/^\s*\*\s+(.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400">$1</li>')
+      .replace(/^\s*-\s+(.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400">$1</li>')
+      .replace(/\*\*/g, '')
+      .replace(/(^|\s)##\s+/gm, '$1')
       .replace(/\n\n/g, '</p><p class="mb-3">')
       .replace(/\n/g, '<br/>')
   }
@@ -1056,6 +1058,9 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     contentEditable
                     suppressContentEditableWarning
                     onMouseUp={handleTextSelection}
+                    onPointerUp={handleTextSelection}
+                    onTouchEnd={handleTextSelection}
+                    onKeyUp={handleTextSelection}
                     onInput={(e) => {
                       manualHtmlRef.current = (e.currentTarget as HTMLDivElement).innerHTML
                     }}
