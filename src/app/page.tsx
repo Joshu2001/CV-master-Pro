@@ -63,7 +63,6 @@ if (typeof window !== 'undefined' && !app) {
 }
 
 const appId = process.env.NEXT_PUBLIC_APP_ID || 'cv-tailor-pro'
-const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY
 
 type FloatingMenuState = {
   visible: boolean
@@ -115,6 +114,11 @@ interface PortfolioStrategy {
 }
 
 const signalFieldKeys = ['gpa', 'testScores', 'cfaStatus'] as const
+
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error && error.message) return error.message
+  return fallback
+}
 
 export default function CVMasterPro() {
   const [user, setUser] = useState<any>(null)
@@ -235,35 +239,44 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
     setIsGeneratingChips(true)
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
+      const data = await callGemini({
+        contents: [
+          {
+            parts: [
               {
-                parts: [
-                  {
-                    text: `Analyze this resume snippet: "${floatingMenu.text}". Suggest 4 distinct, highly-actionable editing directives (max 4-5 words each) to rewrite and emphasize a specific strength (e.g., "Quantify financial impact", "Highlight technical leadership", "Reframe as Deal Exposure", "Make it more concise"). Return ONLY a JSON array of strings.`
-                  }
-                ]
+                text: `Analyze this resume snippet: "${floatingMenu.text}". Suggest 4 distinct, highly-actionable editing directives (max 4-5 words each) to rewrite and emphasize a specific strength (e.g., "Quantify financial impact", "Highlight technical leadership", "Reframe as Deal Exposure", "Make it more concise"). Return ONLY a JSON array of strings.`
               }
-            ],
-            generationConfig: { responseMimeType: 'application/json' }
-          })
-        }
-      )
-      const data = await response.json()
+            ]
+          }
+        ],
+        generationConfig: { responseMimeType: 'application/json' }
+      })
       const generatedChips = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text)
       if (Array.isArray(generatedChips)) {
         setFloatingMenu((prev) => ({ ...prev, chips: generatedChips }))
       }
     } catch (err) {
       console.error('Failed to generate chips', err)
+      setError(getErrorMessage(err, 'Failed to generate suggestions.'))
     } finally {
       setIsGeneratingChips(false)
     }
+  }
+
+  const callGemini = async (payload: Record<string, unknown>) => {
+    const response = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data?.error || 'Gemini request failed.')
+    }
+
+    return data
   }
 
   const askContextualQuestion = async () => {
@@ -271,32 +284,24 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsAsking(true)
     setFloatingMenu((prev) => ({ ...prev, chatResponse: null }))
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
+      const data = await callGemini({
+        contents: [
+          {
+            parts: [
               {
-                parts: [
-                  {
-                    text: `User Selection: "${floatingMenu.text}"\nQuestion: "${floatingMenu.prompt}"\nSystem: Answer like a brief WhatsApp message from a recruiter (1-3 sentences).`
-                  }
-                ]
+                text: `User Selection: "${floatingMenu.text}"\nQuestion: "${floatingMenu.prompt}"\nSystem: Answer like a brief WhatsApp message from a recruiter (1-3 sentences).`
               }
             ]
-          })
-        }
-      )
-      const data = await response.json()
+          }
+        ]
+      })
       setFloatingMenu((prev) => ({
         ...prev,
         chatResponse: data.candidates?.[0]?.content?.parts?.[0]?.text,
         prompt: ''
       }))
     } catch (err) {
-      setError('AI response failed.')
+      setError(getErrorMessage(err, 'AI response failed.'))
     } finally {
       setIsAsking(false)
     }
@@ -312,33 +317,25 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const activeDocumentText = activeTab === 'output' ? optimizedCv : coverLetter
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
+      const data = await callGemini({
+        contents: [
+          {
+            parts: [
               {
-                parts: [
-                  {
-                    text: `Instruction: ${activePrompt}\nSelection: ${floatingMenu.text}\nFull Document: ${activeDocumentText}`
-                  }
-                ]
+                text: `Instruction: ${activePrompt}\nSelection: ${floatingMenu.text}\nFull Document: ${activeDocumentText}`
               }
-            ],
-            systemInstruction: {
-              parts: [
-                {
-                  text: 'Locate and rewrite ONLY the selected markdown section based on the instruction. Maintain strict professional formatting (use **bold** for titles/companies). Output JSON: {"original_markdown": "...", "new_markdown": "..."}'
-                }
-              ]
-            },
-            generationConfig: { responseMimeType: 'application/json' }
-          })
-        }
-      )
-      const data = await response.json()
+            ]
+          }
+        ],
+        systemInstruction: {
+          parts: [
+            {
+              text: 'Locate and rewrite ONLY the selected markdown section based on the instruction. Maintain strict professional formatting (use **bold** for titles/companies). Output JSON: {"original_markdown": "...", "new_markdown": "..."}'
+            }
+          ]
+        },
+        generationConfig: { responseMimeType: 'application/json' }
+      })
       const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text)
       if (parsed.original_markdown && parsed.new_markdown) {
         if (activeTab === 'output') {
@@ -349,7 +346,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
       }
     } catch (err) {
-      setError('Edit failed.')
+      setError(getErrorMessage(err, 'Edit failed.'))
     } finally {
       setIsEditingSelection(false)
     }
@@ -439,30 +436,22 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           }
         } else if (file.type.startsWith('image/')) {
           const base64 = await toBase64(file)
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    parts: [
-                      { text: 'Extract text from CV screenshot.' },
-                      { inlineData: { mimeType: file.type, data: base64 } }
-                    ]
-                  }
+          const data = await callGemini({
+            contents: [
+              {
+                parts: [
+                  { text: 'Extract text from CV screenshot.' },
+                  { inlineData: { mimeType: file.type, data: base64 } }
                 ]
-              })
-            }
-          )
-          const data = await response.json()
+              }
+            ]
+          })
           combinedText += (combinedText ? '\n\n' : '') + (data.candidates?.[0]?.content?.parts?.[0]?.text || '')
         }
       }
       setCvText(combinedText)
     } catch (err) {
-      setError('Extraction error.')
+      setError(getErrorMessage(err, 'Extraction error.'))
     } finally {
       setIsReadingFile(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -491,25 +480,17 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     Perform FIT ANALYSIS. JSON Output: { "cv": "...", "score": 0, "reasons": [], "missing": [] }`
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
-            systemInstruction: { parts: [{ text: prompt }] },
-            generationConfig: { responseMimeType: 'application/json' }
-          })
-        }
-      )
-      const resData = await response.json()
+      const resData = await callGemini({
+        contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
+        systemInstruction: { parts: [{ text: prompt }] },
+        generationConfig: { responseMimeType: 'application/json' }
+      })
       const res = JSON.parse(resData.candidates[0].content.parts[0].text)
       setOptimizedCv(res.cv.replace(/\*\*\*/g, ''))
       setFitAnalysis({ score: res.score, reasons: res.reasons, missing: res.missing })
       setActiveTab('output')
     } catch (err) {
-      setError('Generation failed.')
+      setError(getErrorMessage(err, 'Generation failed.'))
     } finally {
       setIsGenerating(false)
     }
@@ -521,22 +502,14 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const letterPrompt = `Create a matching cover letter for this high-stakes finance role. Limit to 350 words. Format in clean markdown. No artifacts (***).`
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `CV: ${optimizedCv}\nJOB: ${jobDescription}` }] }],
-            systemInstruction: { parts: [{ text: letterPrompt }] }
-          })
-        }
-      )
-      const data = await response.json()
+      const data = await callGemini({
+        contents: [{ parts: [{ text: `CV: ${optimizedCv}\nJOB: ${jobDescription}` }] }],
+        systemInstruction: { parts: [{ text: letterPrompt }] }
+      })
       setCoverLetter(data.candidates?.[0]?.content?.parts?.[0]?.text?.replace(/\*\*\*/g, '') || '')
       setActiveTab('coverletter')
     } catch (err) {
-      setError('Letter generation failed.')
+      setError(getErrorMessage(err, 'Letter generation failed.'))
     } finally {
       setIsGeneratingLetter(false)
     }
@@ -548,23 +521,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const portfolioPrompt = `Specialized Finance Portfolio Strategist. Analyze CV and Job. Output format: { "projects": [{ "title", "tier", "description", "tools", "outcomeGoal" }], "bridge": { "from", "to", "reasoning" } }`
 
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: `CV: ${cvText}\nJOB: ${jobDescription}` }] }],
-            systemInstruction: { parts: [{ text: portfolioPrompt }] },
-            generationConfig: { responseMimeType: 'application/json' }
-          })
-        }
-      )
-      const data = await response.json()
+      const data = await callGemini({
+        contents: [{ parts: [{ text: `CV: ${cvText}\nJOB: ${jobDescription}` }] }],
+        systemInstruction: { parts: [{ text: portfolioPrompt }] },
+        generationConfig: { responseMimeType: 'application/json' }
+      })
       setPortfolioStrategy(JSON.parse(data.candidates[0].content.parts[0].text))
       setActiveTab('portfolio')
     } catch (err) {
-      setError('Strategy failed.')
+      setError(getErrorMessage(err, 'Strategy failed.'))
     } finally {
       setIsStrategizing(false)
     }
