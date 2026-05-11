@@ -80,6 +80,7 @@ type GeminiRequestOptions = {
   model?: string
   timeoutMs?: number
   cacheTtlMs?: number
+  signal?: AbortSignal
 }
 
 type GeminiStreamOptions = GeminiRequestOptions & {
@@ -733,7 +734,8 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
               ...normalizedPayload,
               model: mergedOptions.model,
               timeoutMs: mergedOptions.timeoutMs
-            })
+            }),
+            signal: mergedOptions.signal
           })
 
           const data = await response.json()
@@ -1206,19 +1208,17 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const controller = createStreamController(cvStreamControllerRef)
 
     try {
-      const streamed = await callGeminiStream({
+      const data = await callGemini({
         contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: prompt }] },
         generationConfig: { temperature: 0.3, maxOutputTokens: 1400 }
       }, {
         model: 'gemini-2.5-flash',
-        timeoutMs: 45000,
+        timeoutMs: 60000,
         signal: controller.signal,
-        onText: (text) => {
-          setOptimizedCv(cleanMarkdownStreamText(text))
-        }
+        cacheTtlMs: 0
       })
-      const cleanedCv = cleanMarkdownStreamText(streamed.text).trim()
+      const cleanedCv = cleanMarkdownStreamText(extractGeminiText(data)).trim()
       if (!cleanedCv) {
         throw new Error('No CV content was generated.')
       }
@@ -1259,19 +1259,17 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const controller = createStreamController(coverLetterStreamControllerRef)
 
     try {
-      const streamed = await callGeminiStream({
+      const data = await callGemini({
         contents: [{ parts: [{ text: `CV: ${optimizedCv}\nJOB: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: letterPrompt }] },
         generationConfig: { temperature: 0.4, maxOutputTokens: 700 }
       }, {
         model: 'gemini-2.5-flash',
-        timeoutMs: 30000,
+        timeoutMs: 45000,
         signal: controller.signal,
-        onText: (text) => {
-          setCoverLetter(cleanMarkdownStreamText(text))
-        }
+        cacheTtlMs: 0
       })
-      const generatedLetter = cleanMarkdownStreamText(streamed.text).trim()
+      const generatedLetter = cleanMarkdownStreamText(extractGeminiText(data)).trim()
       if (!generatedLetter) {
         throw new Error('No cover letter content was generated.')
       }
