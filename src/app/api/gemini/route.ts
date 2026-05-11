@@ -29,7 +29,8 @@ export async function POST(request: NextRequest) {
   const requestedModel = typeof payload.model === 'string' && payload.model ? payload.model : GEMINI_MODEL
   const timeoutMs = typeof payload.timeoutMs === 'number' ? payload.timeoutMs : 30000
   const stream = payload.stream === true
-  const { model: _ignoredModel, timeoutMs: _ignoredTimeout, stream: _ignoredStream, ...geminiPayload } = payload
+  const bypassCache = payload.bypassCache === true
+  const { model: _ignoredModel, timeoutMs: _ignoredTimeout, stream: _ignoredStream, bypassCache: _ignoredBypassCache, ...geminiPayload } = payload
   const normalizedPayload = normalizeGeminiPayload(geminiPayload)
 
   if (stream) {
@@ -42,13 +43,13 @@ export async function POST(request: NextRequest) {
   }
 
   const cacheKey = stableStringify({ model: requestedModel, payload: normalizedPayload })
-  const cached = geminiResponseCache.get(cacheKey)
+  const cached = bypassCache ? null : geminiResponseCache.get(cacheKey)
 
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!bypassCache && cached && cached.expiresAt > Date.now()) {
     return NextResponse.json(cached.data)
   }
 
-  const inflight = geminiInflightRequests.get(cacheKey)
+  const inflight = bypassCache ? null : geminiInflightRequests.get(cacheKey)
   if (inflight) {
     const data = await inflight
     return NextResponse.json(data)
@@ -61,14 +62,18 @@ export async function POST(request: NextRequest) {
     timeoutMs
   })
 
-  geminiInflightRequests.set(cacheKey, requestPromise)
+  if (!bypassCache) {
+    geminiInflightRequests.set(cacheKey, requestPromise)
+  }
 
   try {
     const data = await requestPromise
-    geminiResponseCache.set(cacheKey, {
-      expiresAt: Date.now() + GEMINI_CACHE_TTL_MS,
-      data
-    })
+    if (!bypassCache) {
+      geminiResponseCache.set(cacheKey, {
+        expiresAt: Date.now() + GEMINI_CACHE_TTL_MS,
+        data
+      })
+    }
     return NextResponse.json(data)
   } catch (error) {
     if (error instanceof GeminiHttpError) {
@@ -93,7 +98,9 @@ export async function POST(request: NextRequest) {
       { status: 502 }
     )
   } finally {
-    geminiInflightRequests.delete(cacheKey)
+    if (!bypassCache) {
+      geminiInflightRequests.delete(cacheKey)
+    }
   }
 }
 

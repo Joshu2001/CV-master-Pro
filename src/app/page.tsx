@@ -81,6 +81,7 @@ type GeminiRequestOptions = {
   timeoutMs?: number
   cacheTtlMs?: number
   signal?: AbortSignal
+  bypassCache?: boolean
 }
 
 type GeminiStreamOptions = GeminiRequestOptions & {
@@ -181,6 +182,14 @@ const cleanMarkdownStreamText = (value: string) =>
     .replace(/^```(?:markdown)?\s*/i, '')
     .replace(/\n?```$/i, '')
     .replace(/\*\*\*/g, '')
+
+const pickFirstString = (...values: unknown[]) => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+
+  return ''
+}
 
 const isAbortError = (error: unknown) =>
   error instanceof Error && error.name === 'AbortError'
@@ -722,17 +731,19 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const mergedOptions: GeminiRequestOptions = {
       timeoutMs: options.timeoutMs ?? GEMINI_REQUEST_TIMEOUT_MS,
       cacheTtlMs: options.cacheTtlMs ?? GEMINI_CACHE_TTL_MS,
-      model: options.model
+      model: options.model,
+      bypassCache: options.bypassCache ?? false
     }
+    const effectiveCacheTtl = mergedOptions.cacheTtlMs ?? GEMINI_CACHE_TTL_MS
     const cacheKey = buildGeminiCacheKey(normalizedPayload, mergedOptions)
     const now = Date.now()
-    const cached = geminiResponseCacheRef.current.get(cacheKey)
+    const cached = mergedOptions.bypassCache ? null : geminiResponseCacheRef.current.get(cacheKey)
 
-    if (cached && cached.expiresAt > now) {
+    if (!mergedOptions.bypassCache && cached && cached.expiresAt > now) {
       return cached.data
     }
 
-    const inflight = geminiInflightRequestsRef.current.get(cacheKey)
+    const inflight = mergedOptions.bypassCache ? null : geminiInflightRequestsRef.current.get(cacheKey)
     if (inflight) {
       return inflight
     }
@@ -748,7 +759,8 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             body: JSON.stringify({
               ...normalizedPayload,
               model: mergedOptions.model,
-              timeoutMs: mergedOptions.timeoutMs
+              timeoutMs: mergedOptions.timeoutMs,
+              bypassCache: mergedOptions.bypassCache
             }),
             signal: mergedOptions.signal
           })
@@ -759,10 +771,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             throw new Error(data?.error || 'Gemini request failed.')
           }
 
-          geminiResponseCacheRef.current.set(cacheKey, {
-            expiresAt: Date.now() + (mergedOptions.cacheTtlMs || GEMINI_CACHE_TTL_MS),
-            data
-          })
+          if (!mergedOptions.bypassCache && effectiveCacheTtl > 0) {
+            geminiResponseCacheRef.current.set(cacheKey, {
+              expiresAt: Date.now() + effectiveCacheTtl,
+              data
+            })
+          }
 
           return data
         } catch (error) {
@@ -780,12 +794,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       throw lastError
     })()
 
-    geminiInflightRequestsRef.current.set(cacheKey, requestPromise)
+    if (!mergedOptions.bypassCache) {
+      geminiInflightRequestsRef.current.set(cacheKey, requestPromise)
+    }
 
     try {
       return await requestPromise
     } finally {
-      geminiInflightRequestsRef.current.delete(cacheKey)
+      if (!mergedOptions.bypassCache) {
+        geminiInflightRequestsRef.current.delete(cacheKey)
+      }
     }
   }
 
@@ -1236,10 +1254,48 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         model: 'gemini-2.5-flash',
         timeoutMs: 60000,
         signal: controller.signal,
-        cacheTtlMs: 0
+        cacheTtlMs: 0,
+        bypassCache: true
       })
-      const parsed = parseJsonResponse(extractGeminiText(data))
-      const cleanedCv = cleanMarkdownStreamText(parsed?.cv || '').trim()
+      const rawResponseText = extractGeminiText(data)
+      const parsed = parseJsonResponse(rawResponseText)
+
+      let cleanedCv = cleanMarkdownStreamText(
+        pickFirstString(
+          parsed?.cv,
+          parsed?.optimizedCv,
+          parsed?.tailoredCv,
+          parsed?.tailored_cv,
+          parsed?.resume,
+          parsed?.output,
+          parsed?.data?.cv,
+          rawResponseText.startsWith('{') ? '' : rawResponseText
+        )
+      ).trim()
+
+      if (!cleanedCv) {
+        setGenerationStatus('Retrying CV generation with strict markdown output...')
+        const fallback = await callGemini({
+          contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
+          systemInstruction: {
+            parts: [{
+              text: `Elite IB Resume Expert. Rules: Strictly one page. No artifacts (***).
+Use strong markdown structure with clear section headers and quantified bullets.
+Return ONLY the final CV markdown. Do not return JSON.`
+            }]
+          },
+          generationConfig: { temperature: 0.2, maxOutputTokens: 1800 }
+        }, {
+          model: 'gemini-2.5-flash',
+          timeoutMs: 60000,
+          signal: controller.signal,
+          cacheTtlMs: 0,
+          bypassCache: true
+        })
+
+        cleanedCv = cleanMarkdownStreamText(extractGeminiText(fallback)).trim()
+      }
+
       if (!cleanedCv) {
         throw new Error('No CV content was generated.')
       }
@@ -1256,6 +1312,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             : []
       })
       setActiveTab('output')
+
+      if (typeof parsed?.score !== 'number') {
+        setGenerationStatus('Scoring fit...')
+        await generateFitAnalysis(cleanedCv)
+      }
+
       setGenerationStatus('Preparing explanation...')
       await generateArtifactSummary({
         artifactType: 'cv',
