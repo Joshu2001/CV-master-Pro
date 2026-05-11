@@ -79,6 +79,7 @@ type FloatingMenuState = {
 type GeminiRequestOptions = {
   model?: string
   timeoutMs?: number
+  cacheTtlMs?: number
 }
 
 interface Signals {
@@ -129,6 +130,10 @@ interface GenerationSummary {
 }
 
 const signalFieldKeys = ['gpa', 'testScores', 'cfaStatus'] as const
+const GEMINI_CACHE_TTL_MS = 90_000
+const GEMINI_REQUEST_TIMEOUT_MS = 6_500
+const GEMINI_MAX_RETRIES = 2
+const GEMINI_RETRY_BASE_DELAY_MS = 120
 
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) return error.message
@@ -144,6 +149,44 @@ const parseJsonResponse = (value: string | undefined) => {
     return null
   }
 }
+
+const compactPromptText = (value: string) =>
+  value
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+
+const normalizeGeminiPayload = (value: unknown): unknown => {
+  if (typeof value === 'string') return compactPromptText(value)
+  if (Array.isArray(value)) return value.map(normalizeGeminiPayload)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .map(([key, entryValue]) => [key, normalizeGeminiPayload(entryValue)])
+    )
+  }
+
+  return value
+}
+
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
+  return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`).join(',')}}`
+}
+
+const buildGeminiCacheKey = (payload: Record<string, unknown>, options: GeminiRequestOptions) =>
+  stableStringify({ payload, model: options.model || 'default' })
+
+const isRetryableGeminiError = (message: string) =>
+  /timed out|failed to reach gemini|429|5\d\d|503|502|504/i.test(message)
+
+const sleep = (delayMs: number) => new Promise((resolve) => window.setTimeout(resolve, delayMs))
 
 export default function CVMasterPro() {
   const [user, setUser] = useState<any>(null)
@@ -192,6 +235,8 @@ export default function CVMasterPro() {
   const manualEditorRef = useRef<HTMLDivElement>(null)
   const manualHtmlRef = useRef('')
   const selectionRangeRef = useRef<Range | null>(null)
+  const geminiResponseCacheRef = useRef(new Map<string, { expiresAt: number; data: any }>())
+  const geminiInflightRequestsRef = useRef(new Map<string, Promise<any>>())
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [optimizationMode, setOptimizationMode] = useState('finance')
   const [signals, setSignals] = useState<Signals>({
@@ -592,23 +637,74 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   }
 
   const callGemini = async (payload: Record<string, unknown>, options: GeminiRequestOptions = {}) => {
-    const response = await fetch('/api/gemini', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...payload,
-        model: options.model,
-        timeoutMs: options.timeoutMs
-      })
-    })
+    const normalizedPayload = normalizeGeminiPayload(payload) as Record<string, unknown>
+    const mergedOptions: GeminiRequestOptions = {
+      timeoutMs: options.timeoutMs ?? GEMINI_REQUEST_TIMEOUT_MS,
+      cacheTtlMs: options.cacheTtlMs ?? GEMINI_CACHE_TTL_MS,
+      model: options.model
+    }
+    const cacheKey = buildGeminiCacheKey(normalizedPayload, mergedOptions)
+    const now = Date.now()
+    const cached = geminiResponseCacheRef.current.get(cacheKey)
 
-    const data = await response.json()
-
-    if (!response.ok) {
-      throw new Error(data?.error || 'Gemini request failed.')
+    if (cached && cached.expiresAt > now) {
+      return cached.data
     }
 
-    return data
+    const inflight = geminiInflightRequestsRef.current.get(cacheKey)
+    if (inflight) {
+      return inflight
+    }
+
+    const requestPromise = (async () => {
+      let lastError: unknown = null
+
+      for (let attempt = 0; attempt <= GEMINI_MAX_RETRIES; attempt += 1) {
+        try {
+          const response = await fetch('/api/gemini', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...normalizedPayload,
+              model: mergedOptions.model,
+              timeoutMs: mergedOptions.timeoutMs
+            })
+          })
+
+          const data = await response.json()
+
+          if (!response.ok) {
+            throw new Error(data?.error || 'Gemini request failed.')
+          }
+
+          geminiResponseCacheRef.current.set(cacheKey, {
+            expiresAt: Date.now() + (mergedOptions.cacheTtlMs || GEMINI_CACHE_TTL_MS),
+            data
+          })
+
+          return data
+        } catch (error) {
+          lastError = error
+          const message = getErrorMessage(error, 'Gemini request failed.')
+
+          if (attempt === GEMINI_MAX_RETRIES || !isRetryableGeminiError(message)) {
+            throw error
+          }
+
+          await sleep(GEMINI_RETRY_BASE_DELAY_MS * (attempt + 1))
+        }
+      }
+
+      throw lastError
+    })()
+
+    geminiInflightRequestsRef.current.set(cacheKey, requestPromise)
+
+    try {
+      return await requestPromise
+    } finally {
+      geminiInflightRequestsRef.current.delete(cacheKey)
+    }
   }
 
   const generateArtifactSummary = async ({
@@ -742,7 +838,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           maxOutputTokens: 220
         }
       }, {
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         timeoutMs: 5000
       })
       const parsed = parseJsonResponse(data.candidates?.[0]?.content?.parts?.[0]?.text)
