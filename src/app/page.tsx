@@ -147,6 +147,9 @@ export default function CVMasterPro() {
   const [manualDraft, setManualDraft] = useState('')
   const [editHistory, setEditHistory] = useState<string[]>([])
   const [historyIndex, setHistoryIndex] = useState(-1)
+  const [cvLastModified, setCvLastModified] = useState(0)
+  const [coverLetterGeneratedAt, setCoverLetterGeneratedAt] = useState(0)
+  const [isCoverLetterOutOfSync, setIsCoverLetterOutOfSync] = useState(false)
   const [floatingMenu, setFloatingMenu] = useState<FloatingMenuState>({
     visible: false,
     text: '',
@@ -223,6 +226,18 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js')
     loadScript('https://cdn.jsdelivr.net/npm/docx@7.8.2/build/index.min.js')
   }, [])
+
+  // Track when CV is modified to detect sync state with cover letter
+  useEffect(() => {
+    if (optimizedCv && cvLastModified === 0) {
+      // First time CV is generated
+      setCvLastModified(Date.now())
+    } else if (optimizedCv && cvLastModified > 0) {
+      // CV already existed, it's been modified
+      setCvLastModified(Date.now())
+      setIsCoverLetterOutOfSync(true)
+    }
+  }, [optimizedCv])
 
   useEffect(() => {
     setIsManualEditing(false)
@@ -306,6 +321,9 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     
     if (activeTab === 'output') {
       setOptimizedCv(markdown)
+      // Mark cover letter as out of sync when CV is modified
+      setCvLastModified(Date.now())
+      setIsCoverLetterOutOfSync(true)
     } else {
       setCoverLetter(markdown)
     }
@@ -625,6 +643,8 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         systemInstruction: { parts: [{ text: letterPrompt }] }
       })
       setCoverLetter(data.candidates?.[0]?.content?.parts?.[0]?.text?.replace(/\*\*\*/g, '') || '')
+      setCoverLetterGeneratedAt(Date.now())
+      setIsCoverLetterOutOfSync(false)
       setActiveTab('coverletter')
     } catch (err) {
       setError(getErrorMessage(err, 'Letter generation failed.'))
@@ -1069,6 +1089,21 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                       className="px-3 py-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-700 transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide"
                     >
                       {isManualEditing ? 'Save Manual Edit' : 'Manual Edit'}
+                    </button>
+                  )}
+                  {activeTab === 'coverletter' && coverLetter && (
+                    <button
+                      onClick={generateCoverLetter}
+                      disabled={isGeneratingLetter}
+                      className={`px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all border flex items-center gap-2 ${
+                        isCoverLetterOutOfSync
+                          ? 'animate-pulse-glow bg-blue-600 text-white border-blue-600 shadow-lg'
+                          : 'hover:bg-slate-200 bg-white border-slate-200 text-slate-700 shadow-sm'
+                      }`}
+                      title={isCoverLetterOutOfSync ? 'Refresh cover letter to match updated CV' : 'Refresh cover letter'}
+                    >
+                      {isGeneratingLetter ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                      Refresh
                     </button>
                   )}
                   {isManualEditing && (
