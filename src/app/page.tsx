@@ -76,6 +76,11 @@ type FloatingMenuState = {
   chips: string[]
 }
 
+type GeminiRequestOptions = {
+  model?: string
+  timeoutMs?: number
+}
+
 interface Signals {
   gpa: string
   testScores: string
@@ -128,6 +133,16 @@ const signalFieldKeys = ['gpa', 'testScores', 'cfaStatus'] as const
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error && error.message) return error.message
   return fallback
+}
+
+const parseJsonResponse = (value: string | undefined) => {
+  if (!value) return null
+
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
 }
 
 export default function CVMasterPro() {
@@ -518,11 +533,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     }
   }
 
-  const callGemini = async (payload: Record<string, unknown>) => {
+  const callGemini = async (payload: Record<string, unknown>, options: GeminiRequestOptions = {}) => {
     const response = await fetch('/api/gemini', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        ...payload,
+        model: options.model,
+        timeoutMs: options.timeoutMs
+      })
     })
 
     const data = await response.json()
@@ -613,7 +632,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
   const applyContextualEdit = async (overridePrompt: string | null = null) => {
     const activePrompt = overridePrompt || floatingMenu.prompt
-    if (!floatingMenu.text || !activePrompt) return
+    if (!floatingMenu.text || !activePrompt?.trim()) {
+      setError('Add edit instructions before sending.')
+      return
+    }
 
     setIsEditingSelection(true)
     if (overridePrompt) setFloatingMenu((prev) => ({ ...prev, prompt: activePrompt, mode: 'edit' }))
@@ -633,7 +655,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           {
             parts: [
               {
-                text: `Instruction: ${activePrompt}\nSelected Text: "${floatingMenu.text}"\nMarkdown Section To Rewrite:\n${matchedSection}`
+                text: `Instruction: ${activePrompt.trim()}\nSelected Text: "${floatingMenu.text}"\nSection To Rewrite:\n${matchedSection}`
               }
             ]
           }
@@ -645,9 +667,22 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             }
           ]
         },
-        generationConfig: { responseMimeType: 'application/json' }
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+          maxOutputTokens: 400
+        }
+      }, {
+        model: 'gemini-2.0-flash-lite',
+        timeoutMs: 8000
       })
-      const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text)
+      const parsed = parseJsonResponse(data.candidates?.[0]?.content?.parts?.[0]?.text)
+
+      if (!parsed?.rewritten_markdown || typeof parsed.rewritten_markdown !== 'string') {
+        setError('The edit request did not return a usable rewrite. Try a shorter instruction or smaller selection.')
+        return
+      }
+
       if (parsed.rewritten_markdown) {
         const updatedDocument = activeDocumentText.replace(matchedSection, parsed.rewritten_markdown)
 
@@ -667,9 +702,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         }
 
         hideFloatingMenu()
+        setError(null)
       }
     } catch (err) {
-      setError(getErrorMessage(err, 'Edit failed.'))
+      setError(getErrorMessage(err, 'Edit failed. Try a shorter selection or instruction.'))
     } finally {
       setIsEditingSelection(false)
     }
@@ -1048,6 +1084,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const activeSummary = activeTab === 'output' ? cvSummary : activeTab === 'coverletter' ? coverLetterSummary : null
   const isSummaryLoading = activeTab === 'output' ? isSummarizingCv : activeTab === 'coverletter' ? isSummarizingCoverLetter : false
   const copyLabel = activeTab === 'output' ? 'CV' : 'Cover Letter'
+  const canSubmitContextAction =
+    floatingMenu.mode === 'edit'
+      ? !!floatingMenu.prompt.trim() && !isEditingSelection
+      : !!floatingMenu.prompt.trim() && !isAsking
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.14),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(148,163,184,0.18),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_45%,_#f8fafc_100%)] text-slate-900 font-sans selection:bg-blue-100 relative">
@@ -1578,9 +1618,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                             handleContextualAction()
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
+                          disabled={!canSubmitContextAction}
                           className={`${
                             floatingMenu.mode === 'edit' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-emerald-600 hover:bg-emerald-700'
-                          } p-2 rounded-xl text-white shadow-sm transition-all flex items-center justify-center`}
+                          } p-2 rounded-xl text-white shadow-sm transition-all flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-inherit`}
                         >
                           {(floatingMenu.mode === 'edit' ? isEditingSelection : isAsking) ? (
                             <Loader2 className="w-4 h-4 animate-spin" />

@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  let payload: unknown
+  let payload: Record<string, unknown>
 
   try {
     payload = await request.json()
@@ -20,12 +20,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid Gemini request payload.' }, { status: 400 })
   }
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    cache: 'no-store'
-  })
+  const requestedModel = typeof payload.model === 'string' && payload.model ? payload.model : GEMINI_MODEL
+  const timeoutMs = typeof payload.timeoutMs === 'number' ? payload.timeoutMs : 30000
+  const { model: _ignoredModel, timeoutMs: _ignoredTimeout, ...geminiPayload } = payload
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  let response: Response
+
+  try {
+    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(geminiPayload),
+      cache: 'no-store',
+      signal: controller.signal
+    })
+  } catch (error) {
+    clearTimeout(timeoutId)
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      return NextResponse.json(
+        { error: `Gemini request timed out after ${timeoutMs}ms.` },
+        { status: 504 }
+      )
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to reach Gemini.' },
+      { status: 502 }
+    )
+  }
+
+  clearTimeout(timeoutId)
 
   const text = await response.text()
   const data = text ? safeParseJson(text) : {}
