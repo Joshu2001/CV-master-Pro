@@ -183,16 +183,107 @@ const cleanMarkdownStreamText = (value: string) =>
     .replace(/\n?```$/i, '')
     .replace(/\*\*\*/g, '')
 
+const normalizeCvHeadingKey = (line: string) => {
+  const token = line
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/[*`]/g, '')
+    .replace(/\s*(?:&|\/|\+)\s*/g, ' and ')
+    .replace(/[|:]+\s*$/, '')
+    .replace(/[\s\-]+/g, ' ')
+    .trim()
+    .toLowerCase()
+
+  if (!token) return null
+  if (token === 'name and contact' || token === 'contact') return 'header'
+  if (token === 'professional summary' || token === 'summary') return 'summary'
+  if (token === 'education' || token === 'academic background') return 'education'
+  if (token === 'experience' || token === 'professional experience') return 'experience'
+  if (token === 'skills' || token === 'interests' || token === 'skills and interests' || token === 'skills interests') return 'skills'
+
+  return null
+}
+
+const normalizeCvOutput = (value: string) => {
+  const lines = cleanMarkdownStreamText(value)
+    .replace(/\r/g, '')
+    .replace(/\u00a0/g, ' ')
+    .split('\n')
+
+  const normalized: string[] = []
+
+  const pushLine = (line: string) => {
+    if (!line) return
+    const previous = normalized[normalized.length - 1]
+    if (line === previous) return
+    normalized.push(line)
+  }
+
+  for (const rawLine of lines) {
+    let line = rawLine
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`{1,3}/g, '')
+      .replace(/#/g, '')
+      .replace(/^\s*>\s?/, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .trim()
+
+    if (!line) {
+      if (normalized.length > 0 && normalized[normalized.length - 1] !== '') {
+        normalized.push('')
+      }
+      continue
+    }
+
+    line = line
+      .replace(/^\s*(?:[-*]|\d+\.)\s+/, '• ')
+      .replace(/[*`#]/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+
+    const headingKey = normalizeCvHeadingKey(line)
+    if (headingKey === 'header') {
+      pushLine('NAME AND CONTACT')
+      continue
+    }
+    if (headingKey === 'summary') {
+      pushLine('PROFESSIONAL SUMMARY')
+      continue
+    }
+    if (headingKey === 'education') {
+      pushLine('EDUCATION')
+      continue
+    }
+    if (headingKey === 'experience') {
+      pushLine('EXPERIENCE')
+      continue
+    }
+    if (headingKey === 'skills') {
+      pushLine('SKILLS AND INTERESTS')
+      continue
+    }
+
+    pushLine(line)
+  }
+
+  return normalized.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+const hasForbiddenCvFormatting = (value: string) => /[*#`]/.test(value)
+
 const isLikelyIncompleteCv = (value: string) => {
   const text = value.trim()
   if (!text) return true
 
-  const lineCount = text.split('\n').filter((line) => line.trim()).length
-  const hasEducation = /##\s*education/i.test(text)
-  const hasExperience = /##\s*experience/i.test(text)
-  const hasSkills = /##\s*skills?/i.test(text)
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const headingKeys = new Set(lines.map((line) => normalizeCvHeadingKey(line)).filter(Boolean))
+  const bulletCount = lines.filter((line) => /^\s*•\s+/.test(line)).length
+  const hasSummary = headingKeys.has('summary')
+  const hasEducation = headingKeys.has('education')
+  const hasExperience = headingKeys.has('experience')
+  const hasSkills = headingKeys.has('skills')
 
-  return text.length < 420 || lineCount < 10 || !hasEducation || !hasExperience || !hasSkills
+  return text.length < 560 || lines.length < 16 || bulletCount < 6 || !hasSummary || !hasEducation || !hasExperience || !hasSkills
 }
 
 const pickFirstString = (...values: unknown[]) => {
@@ -555,7 +646,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     }
 
     if (activeTab === 'output') {
-      setOptimizedCv(updatedDocument)
+      setOptimizedCv(normalizeCvOutput(updatedDocument))
     } else {
       setCoverLetter(updatedDocument)
     }
@@ -659,7 +750,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setHistoryIndex((prev) => prev + 1)
     
     if (activeTab === 'output') {
-      setOptimizedCv(markdown)
+      setOptimizedCv(normalizeCvOutput(markdown))
       // Mark cover letter as out of sync when CV is modified
       setCvLastModified(Date.now())
       setIsCoverLetterOutOfSync(true)
@@ -1096,7 +1187,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         systemInstruction: {
           parts: [
             {
-              text: 'Rewrite only the provided markdown section based on the instruction. Preserve markdown structure and professional formatting. Return only the rewritten markdown section with no JSON, no commentary, and no surrounding code fences.'
+              text: 'Rewrite only the provided section based on the instruction. Preserve clean plain-text CV formatting with no markdown symbols (#, *, backticks). Return only the rewritten section with no JSON, no commentary, and no code fences.'
             }
           ]
         },
@@ -1173,7 +1264,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const loadProfile = (p: Profile) => {
     setCvText(p.cvText)
     setJobDescription(p.jobDescription)
-    setOptimizedCv(p.optimizedCv)
+    setOptimizedCv(normalizeCvOutput(p.optimizedCv))
     setSignals(p.signals)
     setOptimizationMode(p.optimizationMode)
     setActiveTab('output')
@@ -1259,23 +1350,32 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setCvSummary(null)
     setFitAnalysis(null)
     setGenerationStatus('Rewriting CV draft...')
-    const prompt = `Elite IB Resume Expert. Rules: Strictly one page. No artifacts (***).
-    
-    MANDATORY FORMATTING:
-    - Use bold (**text**) for Company Names, Institutions, and Job Titles to make them pop.
-    - Ensure a clear blank line before every new section header (##).
-    - Format experience headers clearly (e.g. **Company Name** | **Job Title** | Dates).
-    
-    MANDATORY STRUCTURE: Header (Centered), Professional Summary (3-4 lines Framing), Education (GPA ${signals.gpa}, Test ${signals.testScores}), Experience (Action+Quant), Skills/Interests. 
-    Logic: ${signals.structureInstructions}. 
-    Return ONLY the final CV markdown (no JSON, no commentary).`
+    const baseInstruction = `You are an elite investment banking CV engineer.
+
+NON-NEGOTIABLE OUTPUT RULES:
+- Return plain text only.
+- Do NOT use markdown symbols: no #, no *, no backticks, no code fences.
+- Keep to one page density and recruiter-first readability.
+- Use this exact section order and exact heading text on separate lines:
+  1) NAME AND CONTACT
+  2) PROFESSIONAL SUMMARY
+  3) EDUCATION
+  4) EXPERIENCE
+  5) SKILLS AND INTERESTS
+- Use bullets that begin with "• " for achievements and impact points.
+- Every experience entry must include quantified impact where possible.
+- Include GPA (${signals.gpa}), test scores (${signals.testScores}), and credential context (${signals.cfaStatus}) when relevant and truthful.
+- Fully apply this strategic philosophy and do not skip any part:
+${signals.structureInstructions}
+
+Return ONLY the final CV plain text.`
     const controller = createStreamController(cvStreamControllerRef)
 
     try {
       const data = await callGemini({
         contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
-        systemInstruction: { parts: [{ text: prompt }] },
-        generationConfig: { temperature: 0.2, maxOutputTokens: 2600 }
+        systemInstruction: { parts: [{ text: baseInstruction }] },
+        generationConfig: { temperature: 0.15, maxOutputTokens: 3400 }
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 60000,
@@ -1285,20 +1385,22 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       })
       const rawResponseText = extractGeminiText(data)
       const finishReason = data?.candidates?.[0]?.finishReason
-      let cleanedCv = cleanMarkdownStreamText(rawResponseText).trim()
+      let cleanedCv = normalizeCvOutput(rawResponseText)
 
-      if (!cleanedCv || finishReason === 'MAX_TOKENS' || isLikelyIncompleteCv(cleanedCv)) {
+      if (!cleanedCv || finishReason === 'MAX_TOKENS' || isLikelyIncompleteCv(cleanedCv) || hasForbiddenCvFormatting(cleanedCv)) {
         setGenerationStatus('Finalizing complete CV structure...')
         const fallback = await callGemini({
-          contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
+          contents: [{
+            parts: [{
+              text: `ORIGINAL CV:\n${cvText}\n\nJOB DESCRIPTION:\n${jobDescription}\n\nCURRENT DRAFT (INCOMPLETE OR MESSY):\n${cleanedCv || '(empty)'}\n\nTASK: Repair and complete the CV so all required sections are present and fully written.`
+            }]
+          }],
           systemInstruction: {
             parts: [{
-              text: `Elite IB Resume Expert. Rules: Strictly one page. No artifacts (***).
-Use strong markdown structure with clear section headers and quantified bullets.
-Return ONLY the final CV markdown. Do not return JSON.`
+              text: `${baseInstruction}\n\nYou are fixing an incomplete draft. Fill in missing sections and missing quantified bullets while preserving truthful source facts.`
             }]
           },
-          generationConfig: { temperature: 0.2, maxOutputTokens: 3200 }
+          generationConfig: { temperature: 0.1, maxOutputTokens: 3800 }
         }, {
           model: 'gemini-2.5-flash',
           timeoutMs: 90000,
@@ -1307,11 +1409,32 @@ Return ONLY the final CV markdown. Do not return JSON.`
           bypassCache: true
         })
 
-        cleanedCv = cleanMarkdownStreamText(extractGeminiText(fallback)).trim()
+        cleanedCv = normalizeCvOutput(extractGeminiText(fallback))
       }
 
-      if (!cleanedCv) {
-        throw new Error('No CV content was generated.')
+      if (!cleanedCv || isLikelyIncompleteCv(cleanedCv) || hasForbiddenCvFormatting(cleanedCv)) {
+        setGenerationStatus('Rebuilding complete clean CV...')
+        const finalPass = await callGemini({
+          contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
+          systemInstruction: {
+            parts: [{
+              text: `${baseInstruction}\n\nDo a complete rebuild from source and ensure the output is final, complete, and clean.`
+            }]
+          },
+          generationConfig: { temperature: 0.1, maxOutputTokens: 3900 }
+        }, {
+          model: 'gemini-2.5-flash',
+          timeoutMs: 90000,
+          signal: controller.signal,
+          cacheTtlMs: 0,
+          bypassCache: true
+        })
+
+        cleanedCv = normalizeCvOutput(extractGeminiText(finalPass))
+      }
+
+      if (!cleanedCv || isLikelyIncompleteCv(cleanedCv) || hasForbiddenCvFormatting(cleanedCv)) {
+        throw new Error('Generated CV was still incomplete. Please regenerate once more with the same inputs.')
       }
 
       setOptimizedCv(cleanedCv)
@@ -1432,6 +1555,35 @@ Return ONLY the final CV markdown. Do not return JSON.`
         .split('\n')
         .filter((l) => l.trim())
         .map((line) => {
+          const trimmedLine = line.trim()
+
+          if (/^name and contact$/i.test(trimmedLine)) {
+            return new Paragraph({
+              text: 'NAME AND CONTACT',
+              heading: HeadingLevel.HEADING_1,
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 220 },
+              border: { bottom: { color: '000000', space: 1, value: BorderStyle.SINGLE, size: 12 } }
+            })
+          }
+
+          if (/^(professional summary|education|experience|skills and interests|interests|projects|certifications)$/i.test(trimmedLine)) {
+            return new Paragraph({
+              text: trimmedLine.toUpperCase(),
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 320, after: 120 },
+              border: { bottom: { color: '000000', space: 1, value: BorderStyle.SINGLE, size: 6 } }
+            })
+          }
+
+          if (trimmedLine.startsWith('• ')) {
+            return new Paragraph({
+              children: parseLine(trimmedLine.slice(2)),
+              bullet: { level: 0 },
+              spacing: { after: 60 }
+            })
+          }
+
           if (line.startsWith('# '))
             return new Paragraph({
               text: line.replace('# ', '').toUpperCase(),
@@ -1488,11 +1640,14 @@ Return ONLY the final CV markdown. Do not return JSON.`
   const renderPreviewHtml = (markdown: string) => {
     if (!markdown) return ''
     return markdown
+      .replace(/^\s*(name and contact)\s*$/gim, '<h1 class="text-center font-bold uppercase border-b-2 border-black mb-6 pb-1 text-[1.2em]">$1</h1>')
+      .replace(/^\s*(professional summary|education|experience|skills and interests|interests|projects|certifications)\s*$/gim, (_, heading) => `<div class="mt-6 mb-3 border-b border-black"><h2 class="font-bold uppercase tracking-tight text-[1.05em]">${String(heading).toUpperCase()}</h2></div>`)
       .replace(/^\s*###\s+(.*$)/gim, '<h3 class="font-bold mt-4 mb-1 text-[1em]">$1</h3>')
       .replace(/^\s*##\s+(.*$)/gim, '<div class="mt-6 mb-3 border-b border-black"><h2 class="font-bold uppercase tracking-tight text-[1.05em]">$1</h2></div>')
       .replace(/^\s*#\s+(.*$)/gim, '<h1 class="text-center font-bold uppercase border-b-2 border-black mb-6 pb-1 text-[1.2em]">$1</h1>')
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/^\s*•\s+(.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400">$1</li>')
       .replace(/^\s*\*\s+(.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400">$1</li>')
       .replace(/^\s*-\s+(.*$)/gim, '<li class="ml-5 list-disc pl-1 mb-1.5 marker:text-slate-400">$1</li>')
       .replace(/\*\*/g, '')
