@@ -250,6 +250,7 @@ export default function CVMasterPro() {
   const [coverLetterSummary, setCoverLetterSummary] = useState<GenerationSummary | null>(null)
   const [isSummarizingCv, setIsSummarizingCv] = useState(false)
   const [isSummarizingCoverLetter, setIsSummarizingCoverLetter] = useState(false)
+  const [generationStatus, setGenerationStatus] = useState<string | null>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const manualEditorRef = useRef<HTMLDivElement>(null)
   const manualHtmlRef = useRef('')
@@ -408,10 +409,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   }
 
   const stopCvGeneration = () => {
+    setGenerationStatus('Stopping CV generation...')
     cvStreamControllerRef.current?.abort()
   }
 
   const stopCoverLetterGeneration = () => {
+    setGenerationStatus('Stopping cover letter generation...')
     coverLetterStreamControllerRef.current?.abort()
   }
 
@@ -1170,6 +1173,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setError(null)
     setCvSummary(null)
     setFitAnalysis(null)
+    setGenerationStatus('Rewriting CV draft...')
     setActiveTab('output')
     setOptimizedCv('')
     const prompt = `Elite IB Resume Expert. Rules: Strictly one page. No artifacts (***).
@@ -1191,7 +1195,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         generationConfig: { temperature: 0.3, maxOutputTokens: 1400 }
       }, {
         model: 'gemini-2.5-flash',
-        timeoutMs: 18000,
+        timeoutMs: 45000,
         signal: controller.signal,
         onText: (text) => {
           setOptimizedCv(cleanMarkdownStreamText(text))
@@ -1204,12 +1208,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
       setOptimizedCv(cleanedCv)
       setActiveTab('output')
-      void generateFitAnalysis(cleanedCv)
-      void generateArtifactSummary({
-        artifactType: 'cv',
-        sourceText: cvText,
-        outputText: cleanedCv
-      })
+      setGenerationStatus('Scoring fit and preparing explanation...')
+      await Promise.all([
+        generateFitAnalysis(cleanedCv),
+        generateArtifactSummary({
+          artifactType: 'cv',
+          sourceText: cvText,
+          outputText: cleanedCv
+        })
+      ])
     } catch (err) {
       if (isAbortError(err)) {
         return
@@ -1218,6 +1225,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       setError(getErrorMessage(err, 'Generation failed.'))
     } finally {
       releaseStreamController(cvStreamControllerRef, controller)
+      setGenerationStatus(null)
       setIsGenerating(false)
     }
   }
@@ -1227,6 +1235,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsGeneratingLetter(true)
     setError(null)
     setCoverLetterSummary(null)
+    setGenerationStatus('Drafting cover letter...')
     setActiveTab('coverletter')
     setCoverLetter('')
     const letterPrompt = `Create a matching cover letter for this high-stakes finance role. Limit to 350 words. Format in clean markdown. No artifacts (***).`
@@ -1239,7 +1248,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         generationConfig: { temperature: 0.4, maxOutputTokens: 700 }
       }, {
         model: 'gemini-2.5-flash',
-        timeoutMs: 12000,
+        timeoutMs: 30000,
         signal: controller.signal,
         onText: (text) => {
           setCoverLetter(cleanMarkdownStreamText(text))
@@ -1254,7 +1263,8 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       setCoverLetterGeneratedAt(Date.now())
       setIsCoverLetterOutOfSync(false)
       setActiveTab('coverletter')
-      void generateArtifactSummary({
+      setGenerationStatus('Preparing cover letter explanation...')
+      await generateArtifactSummary({
         artifactType: 'coverletter',
         sourceText: optimizedCv,
         outputText: generatedLetter
@@ -1267,6 +1277,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       setError(getErrorMessage(err, 'Letter generation failed.'))
     } finally {
       releaseStreamController(coverLetterStreamControllerRef, controller)
+      setGenerationStatus(null)
       setIsGeneratingLetter(false)
     }
   }
@@ -1614,22 +1625,14 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           </div>
 
           <div className="flex flex-col gap-3 pb-8">
-            {isGenerating ? (
-              <button
-                onClick={stopCvGeneration}
-                className="w-full py-4 rounded-xl bg-rose-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-rose-700 flex items-center justify-center gap-2 transition-all"
-              >
-                <X className="w-4 h-4" /> Stop Generating
-              </button>
-            ) : (
-              <button
-                onClick={generateTailoredCV}
-                disabled={!cvText || !jobDescription}
-                className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 transition-all"
-              >
-                <Wand2 className="w-4 h-4" /> Rewrite CV & Score Fit
-              </button>
-            )}
+            <button
+              onClick={generateTailoredCV}
+              disabled={isGenerating || !cvText || !jobDescription}
+              className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 transition-all"
+            >
+              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+              {isGenerating ? 'Rewriting CV...' : 'Rewrite CV & Score Fit'}
+            </button>
             <button
               onClick={() => {
                 setActiveTab('portfolio')
@@ -1640,6 +1643,26 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
             >
               {isStrategizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lightbulb className="w-4 h-4" />} Analyze Portfolio Strategy
             </button>
+            {(isGenerating || isGeneratingLetter || isSummarizingCv || isSummarizingCoverLetter) && generationStatus && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-blue-700">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generation In Progress
+                    </div>
+                    <p className="mt-1 text-xs text-slate-700 leading-relaxed">{generationStatus}</p>
+                  </div>
+                  {(isGenerating || isGeneratingLetter) && (
+                    <button
+                      onClick={isGenerating ? stopCvGeneration : stopCoverLetterGeneration}
+                      className="shrink-0 rounded-lg bg-rose-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm transition-all hover:bg-rose-700"
+                    >
+                      Stop
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
         )}
@@ -1690,23 +1713,13 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest leading-none">Fit Analysis</div>
                   </div>
                 )}
+                {(isGenerating || isGeneratingLetter || isSummarizingCv || isSummarizingCoverLetter) && generationStatus && (
+                  <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-blue-700">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {generationStatus}
+                  </div>
+                )}
                 <div className="flex items-center gap-2 ml-auto">
-                  {isGenerating && activeTab === 'output' && (
-                    <button
-                      onClick={stopCvGeneration}
-                      className="px-3 py-2 bg-rose-600 hover:bg-rose-700 border border-rose-600 rounded-lg text-white transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide flex items-center gap-2"
-                    >
-                      <X className="w-4 h-4" /> Stop
-                    </button>
-                  )}
-                  {isGeneratingLetter && activeTab === 'coverletter' && (
-                    <button
-                      onClick={stopCoverLetterGeneration}
-                      className="px-3 py-2 bg-rose-600 hover:bg-rose-700 border border-rose-600 rounded-lg text-white transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide flex items-center gap-2"
-                    >
-                      <X className="w-4 h-4" /> Stop
-                    </button>
-                  )}
                   <button
                     onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
                     className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm"
@@ -1744,18 +1757,17 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   )}
                   {activeTab === 'coverletter' && coverLetter && (
                     <button
-                      onClick={isGeneratingLetter ? stopCoverLetterGeneration : generateCoverLetter}
+                      onClick={generateCoverLetter}
+                      disabled={isGeneratingLetter}
                       className={`px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all border flex items-center gap-2 ${
-                        isGeneratingLetter
-                          ? 'bg-rose-600 text-white border-rose-600 shadow-lg hover:bg-rose-700'
-                          : isCoverLetterOutOfSync
+                        isCoverLetterOutOfSync
                             ? 'animate-pulse-glow bg-blue-600 text-white border-blue-600 shadow-lg'
-                            : 'hover:bg-slate-200 bg-white border-slate-200 text-slate-700 shadow-sm'
+                            : 'hover:bg-slate-200 bg-white border-slate-200 text-slate-700 shadow-sm disabled:bg-slate-100 disabled:text-slate-400'
                       }`}
-                      title={isGeneratingLetter ? 'Stop cover letter generation' : isCoverLetterOutOfSync ? 'Refresh cover letter to match updated CV' : 'Refresh cover letter'}
+                      title={isCoverLetterOutOfSync ? 'Refresh cover letter to match updated CV' : 'Refresh cover letter'}
                     >
-                      {isGeneratingLetter ? <X className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
-                      {isGeneratingLetter ? 'Stop' : 'Refresh'}
+                      {isGeneratingLetter ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+                      {isGeneratingLetter ? 'Refreshing...' : 'Refresh'}
                     </button>
                   )}
                   {isManualEditing && (
@@ -1917,17 +1929,14 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     <FileSignature className="w-12 h-12 text-slate-300 mb-4" />
                     <button
                       onClick={() => {
-                        if (isGeneratingLetter) {
-                          stopCoverLetterGeneration()
-                        } else {
-                          generateCoverLetter()
-                        }
+                        generateCoverLetter()
                       }}
+                      disabled={isGeneratingLetter}
                       className={`px-6 py-3 rounded-xl font-bold uppercase text-[10px] tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all ${
-                        isGeneratingLetter ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-zinc-900 text-white hover:bg-zinc-800'
+                        isGeneratingLetter ? 'bg-slate-300 text-slate-500' : 'bg-zinc-900 text-white hover:bg-zinc-800'
                       }`}
                     >
-                      {isGeneratingLetter ? <X className="w-4 h-4" /> : <Send className="w-4 h-4" />} {isGeneratingLetter ? 'Stop Generation' : 'Draft Cover Letter'}
+                      {isGeneratingLetter ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {isGeneratingLetter ? 'Drafting Cover Letter...' : 'Draft Cover Letter'}
                     </button>
                   </div>
                 )}
