@@ -280,6 +280,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const isInManual = manualEditorRef.current && selection?.anchorNode && manualEditorRef.current.contains(selection.anchorNode)
 
     if (text && (isInPreview || isInManual)) {
+      // Preserve the selection state
+      let range: Range | null = null
+      if (selection && selection.rangeCount > 0) {
+        range = selection.getRangeAt(0).cloneRange()
+      }
+
       setFloatingMenu((prev) => ({
         ...prev,
         visible: true,
@@ -458,7 +464,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           {
             parts: [
               {
-                text: `Instruction: ${activePrompt}\nSelection: ${floatingMenu.text}\nFull Document: ${activeDocumentText}`
+                text: `Instruction: ${activePrompt}\nSelected Text: "${floatingMenu.text}"\nFull Document:\n${activeDocumentText}`
               }
             ]
           }
@@ -466,7 +472,14 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         systemInstruction: {
           parts: [
             {
-              text: 'Locate and rewrite ONLY the selected markdown section based on the instruction. Maintain strict professional formatting (use **bold** for titles/companies). Output JSON: {"original_markdown": "...", "new_markdown": "..."}'
+              text: `You are a precise markdown editor. Your task:
+1. Find the section in the document that contains or matches the selected text
+2. The selected text may be plain text while the document has markdown formatting (bold, italic, etc)
+3. Rewrite ONLY that found markdown section based on the instruction
+4. Maintain strict professional formatting (use **bold** for titles/companies)
+5. Return JSON with "original_markdown" (exact text from document to replace) and "new_markdown" (rewritten version)
+6. Be flexible in matching - the selected text might be part of a longer line or have formatting removed
+Example: if selected is "John Smith" and document has "**John Smith** | CEO", return the whole line in original_markdown`
             }
           ]
         },
@@ -1221,11 +1234,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                 )}
 
                 {floatingMenu.visible && (
-                  <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-11/12 max-w-md bg-white border border-slate-200 shadow-[0_20px_40px_-10px_rgba(0,0,0,0.15)] rounded-2xl p-4 animate-in slide-in-from-bottom-6 z-50">
+                  <div 
+                    className="absolute bottom-8 left-1/2 -translate-x-1/2 w-11/12 max-w-md bg-white border border-slate-200 shadow-[0_20px_40px_-10px_rgba(0,0,0,0.15)] rounded-2xl p-4 animate-in slide-in-from-bottom-6 z-50"
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
                     <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-3 px-1">
                       <div className="flex gap-2">
                         <button
                           onClick={() => setFloatingMenu((prev) => ({ ...prev, mode: 'edit' }))}
+                          onMouseDown={(e) => e.stopPropagation()}
                           className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md transition-all ${
                             floatingMenu.mode === 'edit' ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-50'
                           }`}
@@ -1234,6 +1251,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                         </button>
                         <button
                           onClick={() => setFloatingMenu((prev) => ({ ...prev, mode: 'ask' }))}
+                          onMouseDown={(e) => e.stopPropagation()}
                           className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md transition-all ${
                             floatingMenu.mode === 'ask' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'
                           }`}
@@ -1242,6 +1260,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                         </button>
                         <button
                           onClick={generateEmphasizeChips}
+                          onMouseDown={(e) => e.stopPropagation()}
                           className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md transition-all ${
                             floatingMenu.mode === 'emphasize' ? 'bg-amber-50 text-amber-700' : 'text-slate-500 hover:bg-slate-50'
                           }`}
@@ -1260,6 +1279,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                             chips: []
                           })
                         }
+                        onMouseDown={(e) => e.stopPropagation()}
                         className="text-slate-400 hover:text-slate-600 transition-colors p-1"
                       >
                         <X className="w-4 h-4" />
@@ -1278,6 +1298,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                               <button
                                 key={idx}
                                 onClick={() => applyContextualEdit(chip)}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 className="px-2.5 py-1.5 bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 rounded-lg text-[10px] font-bold transition-all text-left"
                               >
                                 {chip}
@@ -1302,10 +1323,20 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                           placeholder={floatingMenu.mode === 'edit' ? 'Instructions...' : 'Ask recruiter...'}
                           value={floatingMenu.prompt}
                           onChange={(e) => setFloatingMenu((prev) => ({ ...prev, prompt: e.target.value }))}
-                          onKeyDown={(e) => e.key === 'Enter' && handleContextualAction()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              handleContextualAction()
+                            }
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
                         />
                         <button
-                          onClick={handleContextualAction}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleContextualAction()
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
                           className={`${
                             floatingMenu.mode === 'edit' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-emerald-600 hover:bg-emerald-700'
                           } p-2 rounded-xl text-white shadow-sm transition-all flex items-center justify-center`}
