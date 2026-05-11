@@ -9,12 +9,14 @@ const geminiResponseCache = new Map<string, { expiresAt: number; data: unknown }
 const geminiInflightRequests = new Map<string, Promise<unknown>>()
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY
-    || process.env.GOOGLE_API_KEY
-    || process.env.GOOGLE_GENERATIVE_AI_API_KEY
-    || process.env.NEXT_PUBLIC_GEMINI_API_KEY
+  const apiKeys = Array.from(new Set([
+    process.env.GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    process.env.NEXT_PUBLIC_GEMINI_API_KEY
+  ].filter((value): value is string => Boolean(value && value.trim()))))
 
-  if (!apiKey) {
+  if (apiKeys.length === 0) {
     return NextResponse.json(
       {
         error: 'Missing Gemini API key. Set GEMINI_API_KEY (recommended) or GOOGLE_API_KEY in environment variables.'
@@ -40,7 +42,7 @@ export async function POST(request: NextRequest) {
 
   if (stream) {
     return handleGeminiStream({
-      apiKey,
+      apiKeys,
       requestedModel,
       payload: normalizedPayload,
       timeoutMs
@@ -61,7 +63,7 @@ export async function POST(request: NextRequest) {
   }
 
   const requestPromise = fetchGeminiWithRetry({
-    apiKey,
+    apiKeys,
     requestedModel,
     payload: normalizedPayload,
     timeoutMs
@@ -121,59 +123,71 @@ class GeminiHttpError extends Error {
 }
 
 async function fetchGeminiWithRetry({
-  apiKey,
+  apiKeys,
   requestedModel,
   payload,
   timeoutMs
 }: {
-  apiKey: string
+  apiKeys: string[]
   requestedModel: string
   payload: unknown
   timeoutMs: number
 }) {
   let lastError: unknown = null
 
-  for (let attempt = 0; attempt <= GEMINI_MAX_RETRIES; attempt += 1) {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  for (const apiKey of apiKeys) {
+    for (let attempt = 0; attempt <= GEMINI_MAX_RETRIES; attempt += 1) {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        cache: 'no-store',
-        signal: controller.signal
-      })
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          cache: 'no-store',
+          signal: controller.signal
+        })
 
-      clearTimeout(timeoutId)
+        clearTimeout(timeoutId)
 
-      const text = await response.text()
-      const data = text ? safeParseJson(text) : {}
+        const text = await response.text()
+        const data = text ? safeParseJson(text) : {}
 
-      if (!response.ok) {
-        if (attempt < GEMINI_MAX_RETRIES && isRetryableStatus(response.status)) {
-          await sleep(GEMINI_RETRY_BASE_DELAY_MS * (attempt + 1))
-          continue
+        if (!response.ok) {
+          const canTryNextKey = isKeyAuthError(response.status, data)
+          if (canTryNextKey) {
+            lastError = new GeminiHttpError(response.status, data)
+            break
+          }
+
+          if (attempt < GEMINI_MAX_RETRIES && isRetryableStatus(response.status)) {
+            await sleep(GEMINI_RETRY_BASE_DELAY_MS * (attempt + 1))
+            continue
+          }
+
+          throw new GeminiHttpError(response.status, data)
         }
 
-        throw new GeminiHttpError(response.status, data)
+        return data
+      } catch (error) {
+        clearTimeout(timeoutId)
+        lastError = error
+
+        if (error instanceof GeminiHttpError) {
+          if (isKeyAuthError(error.status, error.data)) {
+            break
+          }
+
+          throw error
+        }
+
+        if (attempt === GEMINI_MAX_RETRIES) {
+          throw error
+        }
+
+        await sleep(GEMINI_RETRY_BASE_DELAY_MS * (attempt + 1))
       }
-
-      return data
-    } catch (error) {
-      clearTimeout(timeoutId)
-      lastError = error
-
-      if (error instanceof GeminiHttpError) {
-        throw error
-      }
-
-      if (attempt === GEMINI_MAX_RETRIES) {
-        throw error
-      }
-
-      await sleep(GEMINI_RETRY_BASE_DELAY_MS * (attempt + 1))
     }
   }
 
@@ -238,95 +252,121 @@ function extractGeminiError(data: any, status: number) {
 }
 
 async function handleGeminiStream({
-  apiKey,
+  apiKeys,
   requestedModel,
   payload,
   timeoutMs
 }: {
-  apiKey: string
+  apiKeys: string[]
   requestedModel: string
   payload: unknown
   timeoutMs: number
 }) {
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  let lastStatus = 502
+  let lastData: unknown = {}
 
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:streamGenerateContent?alt=sse&key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-      signal: controller.signal
-    })
+  for (const apiKey of apiKeys) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
-    if (!response.ok) {
-      clearTimeout(timeoutId)
-      const text = await response.text()
-      const data = text ? safeParseJson(text) : {}
-      return NextResponse.json(
-        {
-          error: extractGeminiError(data, response.status),
-          details: data
-        },
-        { status: response.status }
-      )
-    }
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:streamGenerateContent?alt=sse&key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        cache: 'no-store',
+        signal: controller.signal
+      })
 
-    if (!response.body) {
-      clearTimeout(timeoutId)
-      return NextResponse.json({ error: 'Gemini stream was unavailable.' }, { status: 502 })
-    }
+      if (!response.ok) {
+        clearTimeout(timeoutId)
+        const text = await response.text()
+        const data = text ? safeParseJson(text) : {}
+        lastStatus = response.status
+        lastData = data
 
-    const reader = response.body.getReader()
-    const stream = new ReadableStream<Uint8Array>({
-      async start(streamController) {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            if (value) streamController.enqueue(value)
+        if (isKeyAuthError(response.status, data)) {
+          continue
+        }
+
+        return NextResponse.json(
+          {
+            error: extractGeminiError(data, response.status),
+            details: data
+          },
+          { status: response.status }
+        )
+      }
+
+      if (!response.body) {
+        clearTimeout(timeoutId)
+        return NextResponse.json({ error: 'Gemini stream was unavailable.' }, { status: 502 })
+      }
+
+      const reader = response.body.getReader()
+      const stream = new ReadableStream<Uint8Array>({
+        async start(streamController) {
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              if (value) streamController.enqueue(value)
+            }
+            streamController.close()
+          } catch (error) {
+            streamController.error(error)
+          } finally {
+            clearTimeout(timeoutId)
+            try {
+              reader.releaseLock()
+            } catch {}
           }
-          streamController.close()
-        } catch (error) {
-          streamController.error(error)
-        } finally {
+        },
+        cancel() {
           clearTimeout(timeoutId)
+          controller.abort()
           try {
             reader.releaseLock()
           } catch {}
         }
-      },
-      cancel() {
-        clearTimeout(timeoutId)
-        controller.abort()
-        try {
-          reader.releaseLock()
-        } catch {}
-      }
-    })
+      })
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no'
-      }
-    })
-  } catch (error) {
-    clearTimeout(timeoutId)
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no'
+        }
+      })
+    } catch (error) {
+      clearTimeout(timeoutId)
 
-    if (error instanceof Error && error.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return NextResponse.json(
+          { error: `Gemini request timed out after ${timeoutMs}ms.` },
+          { status: 504 }
+        )
+      }
+
       return NextResponse.json(
-        { error: `Gemini request timed out after ${timeoutMs}ms.` },
-        { status: 504 }
+        { error: 'Failed to reach Gemini.' },
+        { status: 502 }
       )
     }
-
-    return NextResponse.json(
-      { error: 'Failed to reach Gemini.' },
-      { status: 502 }
-    )
   }
+
+  return NextResponse.json(
+    {
+      error: extractGeminiError(lastData, lastStatus),
+      details: lastData
+    },
+    { status: lastStatus }
+  )
+}
+
+function isKeyAuthError(status: number, data: unknown) {
+  if (status !== 401 && status !== 403) return false
+  const message = extractGeminiError(data, status)
+  return /reported as leaked|permission_denied|api key|invalid|revoked|unauthorized/i.test(message)
 }
