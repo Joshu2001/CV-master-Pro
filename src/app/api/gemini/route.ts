@@ -9,11 +9,16 @@ const geminiResponseCache = new Map<string, { expiresAt: number; data: unknown }
 const geminiInflightRequests = new Map<string, Promise<unknown>>()
 
 export async function POST(request: NextRequest) {
-  const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY
+  const apiKey = process.env.GEMINI_API_KEY
+    || process.env.GOOGLE_API_KEY
+    || process.env.GOOGLE_GENERATIVE_AI_API_KEY
+    || process.env.NEXT_PUBLIC_GEMINI_API_KEY
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: 'Missing Gemini API key. Set GEMINI_API_KEY in Vercel environment variables.' },
+      {
+        error: 'Missing Gemini API key. Set GEMINI_API_KEY (recommended) or GOOGLE_API_KEY in environment variables.'
+      },
       { status: 500 }
     )
   }
@@ -223,7 +228,13 @@ function safeParseJson(text: string) {
 }
 
 function extractGeminiError(data: any, status: number) {
-  return data?.error?.message || `Gemini request failed with status ${status}.`
+  const message = data?.error?.message || `Gemini request failed with status ${status}.`
+
+  if (/reported as leaked|PERMISSION_DENIED/i.test(message)) {
+    return 'Gemini API key is revoked or invalid. Generate a new key in Google AI Studio and set GEMINI_API_KEY in your environment.'
+  }
+
+  return message
 }
 
 async function handleGeminiStream({
