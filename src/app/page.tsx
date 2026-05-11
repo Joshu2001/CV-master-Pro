@@ -82,6 +82,10 @@ type GeminiRequestOptions = {
   cacheTtlMs?: number
 }
 
+type GeminiStreamOptions = GeminiRequestOptions & {
+  onText?: (text: string) => void
+}
+
 interface Signals {
   gpa: string
   testScores: string
@@ -149,6 +153,17 @@ const parseJsonResponse = (value: string | undefined) => {
     return null
   }
 }
+
+const extractGeminiText = (data: any) =>
+  data?.candidates?.[0]?.content?.parts
+    ?.map((part: any) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('') || ''
+
+const cleanMarkdownStreamText = (value: string) =>
+  value
+    .replace(/^```(?:markdown)?\s*/i, '')
+    .replace(/\n?```$/i, '')
+    .replace(/\*\*\*/g, '')
 
 const compactPromptText = (value: string) =>
   value
@@ -707,6 +722,120 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     }
   }
 
+  const callGeminiStream = async (payload: Record<string, unknown>, options: GeminiStreamOptions = {}) => {
+    const normalizedPayload = normalizeGeminiPayload(payload) as Record<string, unknown>
+    const response = await fetch('/api/gemini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...normalizedPayload,
+        model: options.model,
+        timeoutMs: options.timeoutMs ?? 15000,
+        stream: true
+      })
+    })
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(data?.error || 'Gemini stream failed.')
+    }
+
+    if (!response.body) {
+      throw new Error('Gemini stream was unavailable.')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let latestText = ''
+    let lastPayload: any = null
+
+    const consumeEvent = (eventBlock: string) => {
+      const lines = eventBlock
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .filter(Boolean)
+
+      const dataLines = lines
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+
+      if (!dataLines.length) return
+
+      const dataText = dataLines.join('\n')
+      if (dataText === '[DONE]') return
+
+      const parsed = parseJsonResponse(dataText)
+      if (!parsed) return
+
+      lastPayload = parsed
+      const nextText = extractGeminiText(parsed)
+      if (nextText && nextText !== latestText) {
+        latestText = !latestText
+          ? nextText
+          : nextText.startsWith(latestText)
+            ? nextText
+            : latestText.includes(nextText)
+              ? latestText
+              : `${latestText}${nextText}`
+        options.onText?.(latestText)
+      }
+    }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+        buffer = buffer.replace(/\r\n/g, '\n')
+
+        let boundaryIndex = buffer.indexOf('\n\n')
+        while (boundaryIndex >= 0) {
+          const eventBlock = buffer.slice(0, boundaryIndex)
+          buffer = buffer.slice(boundaryIndex + 2)
+          consumeEvent(eventBlock)
+          boundaryIndex = buffer.indexOf('\n\n')
+        }
+
+        if (done) break
+      }
+
+      if (buffer.trim()) {
+        consumeEvent(buffer)
+      }
+    } finally {
+      reader.releaseLock()
+    }
+
+    return {
+      data: lastPayload,
+      text: latestText
+    }
+  }
+
+  const generateFitAnalysis = async (generatedCv: string) => {
+    try {
+      const data = await callGemini({
+        contents: [{ parts: [{ text: `Tailored CV:\n${generatedCv}\n\nJob Description:\n${jobDescription}` }] }],
+        systemInstruction: {
+          parts: [{
+            text: 'Assess fit between the tailored CV and the job description. Return JSON exactly in this shape: {"score": 0, "reasons": [], "missing": []}. Score must be 0-100 and arrays should each contain 2-4 short items.'
+          }]
+        },
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+
+      const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || '{}')
+      setFitAnalysis({
+        score: typeof parsed.score === 'number' ? parsed.score : 0,
+        reasons: Array.isArray(parsed.reasons) ? parsed.reasons : [],
+        missing: Array.isArray(parsed.missing) ? parsed.missing : []
+      })
+    } catch (err) {
+      console.error('Failed to generate fit analysis', err)
+      setFitAnalysis(null)
+    }
+  }
+
   const generateArtifactSummary = async ({
     artifactType,
     sourceText,
@@ -815,7 +944,9 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     }
 
     try {
-      const data = await callGemini({
+      setFloatingMenu((prev) => ({ ...prev, chatResponse: '' }))
+
+      const streamed = await callGeminiStream({
         contents: [
           {
             parts: [
@@ -828,33 +959,33 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         systemInstruction: {
           parts: [
             {
-              text: 'Rewrite only the provided markdown section based on the instruction. Preserve markdown structure and professional formatting. Return JSON: {"rewritten_markdown": "..."}'
+              text: 'Rewrite only the provided markdown section based on the instruction. Preserve markdown structure and professional formatting. Return only the rewritten markdown section with no JSON, no commentary, and no surrounding code fences.'
             }
           ]
         },
         generationConfig: {
-          responseMimeType: 'application/json',
           temperature: 0.2,
           maxOutputTokens: 220
         }
       }, {
         model: 'gemini-2.5-flash',
-        timeoutMs: 5000
+        timeoutMs: 8000,
+        onText: (text) => {
+          setFloatingMenu((prev) => ({ ...prev, chatResponse: cleanMarkdownStreamText(text) }))
+        }
       })
-      const parsed = parseJsonResponse(data.candidates?.[0]?.content?.parts?.[0]?.text)
+      const rewrittenSection = cleanMarkdownStreamText(streamed.text).trim()
 
-      if (!parsed?.rewritten_markdown || typeof parsed.rewritten_markdown !== 'string') {
+      if (!rewrittenSection) {
         setContextualError('No usable rewrite came back. Try a shorter instruction or a more specific command like add, replace, or remove.')
         return
       }
 
-      if (parsed.rewritten_markdown) {
-        const updatedDocument = activeDocumentText.replace(matchedSection, parsed.rewritten_markdown)
-        applyUpdatedDocument(updatedDocument)
+      const updatedDocument = activeDocumentText.replace(matchedSection, rewrittenSection)
+      applyUpdatedDocument(updatedDocument)
 
-        hideFloatingMenu()
-        setError(null)
-      }
+      hideFloatingMenu()
+      setError(null)
     } catch (err) {
       setContextualError(getErrorMessage(err, 'Edit failed. Try a shorter selection or specific add/replace/remove instruction.'))
     } finally {
@@ -978,6 +1109,11 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const generateTailoredCV = async () => {
     if (!cvText || !jobDescription) return
     setIsGenerating(true)
+    setError(null)
+    setCvSummary(null)
+    setFitAnalysis(null)
+    setActiveTab('output')
+    setOptimizedCv('')
     const prompt = `Elite IB Resume Expert. Rules: Strictly one page. No artifacts (***).
     
     MANDATORY FORMATTING:
@@ -987,19 +1123,28 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     
     MANDATORY STRUCTURE: Header (Centered), Professional Summary (3-4 lines Framing), Education (GPA ${signals.gpa}, Test ${signals.testScores}), Experience (Action+Quant), Skills/Interests. 
     Logic: ${signals.structureInstructions}. 
-    Perform FIT ANALYSIS. JSON Output: { "cv": "...", "score": 0, "reasons": [], "missing": [] }`
+    Return only the final CV in clean markdown with no JSON and no commentary.`
 
     try {
-      const resData = await callGemini({
+      const streamed = await callGeminiStream({
         contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: prompt }] },
-        generationConfig: { responseMimeType: 'application/json' }
+        generationConfig: { temperature: 0.3, maxOutputTokens: 1400 }
+      }, {
+        model: 'gemini-2.5-flash',
+        timeoutMs: 18000,
+        onText: (text) => {
+          setOptimizedCv(cleanMarkdownStreamText(text))
+        }
       })
-      const res = JSON.parse(resData.candidates[0].content.parts[0].text)
-      const cleanedCv = res.cv.replace(/\*\*\*/g, '')
+      const cleanedCv = cleanMarkdownStreamText(streamed.text).trim()
+      if (!cleanedCv) {
+        throw new Error('No CV content was generated.')
+      }
+
       setOptimizedCv(cleanedCv)
-      setFitAnalysis({ score: res.score, reasons: res.reasons, missing: res.missing })
       setActiveTab('output')
+      void generateFitAnalysis(cleanedCv)
       void generateArtifactSummary({
         artifactType: 'cv',
         sourceText: cvText,
@@ -1015,14 +1160,29 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const generateCoverLetter = async () => {
     if (!optimizedCv || !jobDescription) return
     setIsGeneratingLetter(true)
+    setError(null)
+    setCoverLetterSummary(null)
+    setActiveTab('coverletter')
+    setCoverLetter('')
     const letterPrompt = `Create a matching cover letter for this high-stakes finance role. Limit to 350 words. Format in clean markdown. No artifacts (***).`
 
     try {
-      const data = await callGemini({
+      const streamed = await callGeminiStream({
         contents: [{ parts: [{ text: `CV: ${optimizedCv}\nJOB: ${jobDescription}` }] }],
-        systemInstruction: { parts: [{ text: letterPrompt }] }
+        systemInstruction: { parts: [{ text: letterPrompt }] },
+        generationConfig: { temperature: 0.4, maxOutputTokens: 700 }
+      }, {
+        model: 'gemini-2.5-flash',
+        timeoutMs: 12000,
+        onText: (text) => {
+          setCoverLetter(cleanMarkdownStreamText(text))
+        }
       })
-      const generatedLetter = data.candidates?.[0]?.content?.parts?.[0]?.text?.replace(/\*\*\*/g, '') || ''
+      const generatedLetter = cleanMarkdownStreamText(streamed.text).trim()
+      if (!generatedLetter) {
+        throw new Error('No cover letter content was generated.')
+      }
+
       setCoverLetter(generatedLetter)
       setCoverLetterGeneratedAt(Date.now())
       setIsCoverLetterOutOfSync(false)
@@ -1744,6 +1904,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                             ))}
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {floatingMenu.mode === 'edit' && floatingMenu.chatResponse && (
+                      <div className="mb-3 bg-blue-50 rounded-xl p-3 text-xs text-blue-900 border border-blue-200 shadow-sm leading-relaxed whitespace-pre-wrap">
+                        {floatingMenu.chatResponse}
                       </div>
                     )}
 

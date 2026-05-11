@@ -28,8 +28,19 @@ export async function POST(request: NextRequest) {
 
   const requestedModel = typeof payload.model === 'string' && payload.model ? payload.model : GEMINI_MODEL
   const timeoutMs = typeof payload.timeoutMs === 'number' ? payload.timeoutMs : 30000
-  const { model: _ignoredModel, timeoutMs: _ignoredTimeout, ...geminiPayload } = payload
+  const stream = payload.stream === true
+  const { model: _ignoredModel, timeoutMs: _ignoredTimeout, stream: _ignoredStream, ...geminiPayload } = payload
   const normalizedPayload = normalizeGeminiPayload(geminiPayload)
+
+  if (stream) {
+    return handleGeminiStream({
+      apiKey,
+      requestedModel,
+      payload: normalizedPayload,
+      timeoutMs
+    })
+  }
+
   const cacheKey = stableStringify({ model: requestedModel, payload: normalizedPayload })
   const cached = geminiResponseCache.get(cacheKey)
 
@@ -206,4 +217,98 @@ function safeParseJson(text: string) {
 
 function extractGeminiError(data: any, status: number) {
   return data?.error?.message || `Gemini request failed with status ${status}.`
+}
+
+async function handleGeminiStream({
+  apiKey,
+  requestedModel,
+  payload,
+  timeoutMs
+}: {
+  apiKey: string
+  requestedModel: string
+  payload: unknown
+  timeoutMs: number
+}) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${requestedModel}:streamGenerateContent?alt=sse&key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      cache: 'no-store',
+      signal: controller.signal
+    })
+
+    if (!response.ok) {
+      clearTimeout(timeoutId)
+      const text = await response.text()
+      const data = text ? safeParseJson(text) : {}
+      return NextResponse.json(
+        {
+          error: extractGeminiError(data, response.status),
+          details: data
+        },
+        { status: response.status }
+      )
+    }
+
+    if (!response.body) {
+      clearTimeout(timeoutId)
+      return NextResponse.json({ error: 'Gemini stream was unavailable.' }, { status: 502 })
+    }
+
+    const reader = response.body.getReader()
+    const stream = new ReadableStream<Uint8Array>({
+      async start(streamController) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            if (value) streamController.enqueue(value)
+          }
+          streamController.close()
+        } catch (error) {
+          streamController.error(error)
+        } finally {
+          clearTimeout(timeoutId)
+          try {
+            reader.releaseLock()
+          } catch {}
+        }
+      },
+      cancel() {
+        clearTimeout(timeoutId)
+        controller.abort()
+        try {
+          reader.releaseLock()
+        } catch {}
+      }
+    })
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no'
+      }
+    })
+  } catch (error) {
+    clearTimeout(timeoutId)
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      return NextResponse.json(
+        { error: `Gemini request timed out after ${timeoutMs}ms.` },
+        { status: 504 }
+      )
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to reach Gemini.' },
+      { status: 502 }
+    )
+  }
 }
