@@ -857,6 +857,23 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       reader.releaseLock()
     }
 
+    if (!latestText) {
+      const fallbackData = await callGemini(normalizedPayload, {
+        model: options.model,
+        timeoutMs: options.timeoutMs,
+        cacheTtlMs: 0
+      })
+      const fallbackText = cleanMarkdownStreamText(extractGeminiText(fallbackData)).trim()
+
+      if (fallbackText) {
+        options.onText?.(fallbackText)
+        return {
+          data: fallbackData,
+          text: fallbackText
+        }
+      }
+    }
+
     return {
       data: lastPayload,
       text: latestText
