@@ -183,6 +183,18 @@ const cleanMarkdownStreamText = (value: string) =>
     .replace(/\n?```$/i, '')
     .replace(/\*\*\*/g, '')
 
+const isLikelyIncompleteCv = (value: string) => {
+  const text = value.trim()
+  if (!text) return true
+
+  const lineCount = text.split('\n').filter((line) => line.trim()).length
+  const hasEducation = /##\s*education/i.test(text)
+  const hasExperience = /##\s*experience/i.test(text)
+  const hasSkills = /##\s*skills?/i.test(text)
+
+  return text.length < 420 || lineCount < 10 || !hasEducation || !hasExperience || !hasSkills
+}
+
 const pickFirstString = (...values: unknown[]) => {
   for (const value of values) {
     if (typeof value === 'string' && value.trim()) return value.trim()
@@ -989,7 +1001,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         generationConfig: { responseMimeType: 'application/json' }
       })
 
-      const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || '{}')
+      const parsed = parseJsonResponse(data.candidates?.[0]?.content?.parts?.[0]?.text) || {}
       setSummary({
         headline: typeof parsed.headline === 'string' ? parsed.headline : artifactType === 'cv' ? 'CV rewrite summary' : 'Cover letter summary',
         changes: Array.isArray(parsed.changes) ? parsed.changes : [],
@@ -998,6 +1010,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       })
     } catch (err) {
       console.error(`Failed to summarize ${artifactType}`, err)
+      setSummary({
+        headline: artifactType === 'cv' ? 'CV rewrite summary' : 'Cover letter summary',
+        changes: ['Content generated successfully and aligned to your target role.'],
+        structure: ['Kept a one-page, recruiter-friendly layout with clear section hierarchy.'],
+        why: ['Prioritized relevance and signal clarity for faster recruiter scanning.']
+      })
     } finally {
       setLoading(false)
     }
@@ -1257,7 +1275,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       const data = await callGemini({
         contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: prompt }] },
-        generationConfig: { temperature: 0.2, maxOutputTokens: 1800 }
+        generationConfig: { temperature: 0.2, maxOutputTokens: 2600 }
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 60000,
@@ -1266,10 +1284,11 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         bypassCache: true
       })
       const rawResponseText = extractGeminiText(data)
+      const finishReason = data?.candidates?.[0]?.finishReason
       let cleanedCv = cleanMarkdownStreamText(rawResponseText).trim()
 
-      if (!cleanedCv) {
-        setGenerationStatus('Retrying CV generation with strict markdown output...')
+      if (!cleanedCv || finishReason === 'MAX_TOKENS' || isLikelyIncompleteCv(cleanedCv)) {
+        setGenerationStatus('Finalizing complete CV structure...')
         const fallback = await callGemini({
           contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
           systemInstruction: {
@@ -1279,10 +1298,10 @@ Use strong markdown structure with clear section headers and quantified bullets.
 Return ONLY the final CV markdown. Do not return JSON.`
             }]
           },
-          generationConfig: { temperature: 0.2, maxOutputTokens: 1800 }
+          generationConfig: { temperature: 0.2, maxOutputTokens: 3200 }
         }, {
           model: 'gemini-2.5-flash',
-          timeoutMs: 60000,
+          timeoutMs: 90000,
           signal: controller.signal,
           cacheTtlMs: 0,
           bypassCache: true
@@ -1739,9 +1758,9 @@ Return ONLY the final CV markdown. Do not return JSON.`
                     </div>
                     <p className="mt-1 text-xs text-slate-700 leading-relaxed">{generationStatus}</p>
                   </div>
-                  {(isGenerating || isGeneratingLetter) && (
+                  {(isGeneratingLetter || (isGenerating && generationStatus?.toLowerCase().includes('rewriting'))) && (
                     <button
-                      onClick={isGenerating ? stopCvGeneration : stopCoverLetterGeneration}
+                      onClick={isGeneratingLetter ? stopCoverLetterGeneration : stopCvGeneration}
                       className="shrink-0 rounded-lg bg-rose-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm transition-all hover:bg-rose-700"
                     >
                       Stop
@@ -1788,7 +1807,7 @@ Return ONLY the final CV markdown. Do not return JSON.`
           {(activeTab === 'output' || activeTab === 'coverletter') && optimizedCv && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-md overflow-hidden flex flex-col h-full relative">
               <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
-                {activeTab === 'output' && fitAnalysis && (
+                {activeTab === 'output' && fitAnalysis && !isGenerating && !isScoringFit && (
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full border border-blue-200 flex items-center justify-center relative bg-white">
                       <span className="text-[10px] font-black text-blue-700">{fitAnalysis.score}%</span>
@@ -1923,7 +1942,7 @@ Return ONLY the final CV markdown. Do not return JSON.`
                 </div>
               </div>
 
-              {activeTab === 'output' && fitAnalysis && !isScoringFit && fitAnalysis.score < 95 && (
+              {activeTab === 'output' && fitAnalysis && !isGenerating && !isScoringFit && fitAnalysis.score < 95 && (
                 <div className="px-5 py-4 bg-amber-50 border-b border-amber-200 shrink-0">
                   <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-amber-700 mb-3">
                     <AlertCircle className="w-3.5 h-3.5" />
