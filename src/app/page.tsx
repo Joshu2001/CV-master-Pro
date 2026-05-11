@@ -84,6 +84,7 @@ type GeminiRequestOptions = {
 
 type GeminiStreamOptions = GeminiRequestOptions & {
   onText?: (text: string) => void
+  signal?: AbortSignal
 }
 
 interface Signals {
@@ -164,6 +165,9 @@ const cleanMarkdownStreamText = (value: string) =>
     .replace(/^```(?:markdown)?\s*/i, '')
     .replace(/\n?```$/i, '')
     .replace(/\*\*\*/g, '')
+
+const isAbortError = (error: unknown) =>
+  error instanceof Error && error.name === 'AbortError'
 
 const compactPromptText = (value: string) =>
   value
@@ -252,6 +256,9 @@ export default function CVMasterPro() {
   const selectionRangeRef = useRef<Range | null>(null)
   const geminiResponseCacheRef = useRef(new Map<string, { expiresAt: number; data: any }>())
   const geminiInflightRequestsRef = useRef(new Map<string, Promise<any>>())
+  const cvStreamControllerRef = useRef<AbortController | null>(null)
+  const coverLetterStreamControllerRef = useRef<AbortController | null>(null)
+  const contextualStreamControllerRef = useRef<AbortController | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [optimizationMode, setOptimizationMode] = useState('finance')
   const [signals, setSignals] = useState<Signals>({
@@ -371,6 +378,46 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isManualEditing, historyIndex, editHistory])
+
+  useEffect(() => {
+    const cvController = cvStreamControllerRef
+    const coverLetterController = coverLetterStreamControllerRef
+    const contextualController = contextualStreamControllerRef
+
+    return () => {
+      cvController.current?.abort()
+      coverLetterController.current?.abort()
+      contextualController.current?.abort()
+    }
+  }, [])
+
+  const createStreamController = (controllerRef: React.MutableRefObject<AbortController | null>) => {
+    controllerRef.current?.abort()
+    const controller = new AbortController()
+    controllerRef.current = controller
+    return controller
+  }
+
+  const releaseStreamController = (
+    controllerRef: React.MutableRefObject<AbortController | null>,
+    controller: AbortController
+  ) => {
+    if (controllerRef.current === controller) {
+      controllerRef.current = null
+    }
+  }
+
+  const stopCvGeneration = () => {
+    cvStreamControllerRef.current?.abort()
+  }
+
+  const stopCoverLetterGeneration = () => {
+    coverLetterStreamControllerRef.current?.abort()
+  }
+
+  const stopContextualEdit = () => {
+    contextualStreamControllerRef.current?.abort()
+  }
 
   const clearSelectionHighlight = () => {
     selectionRangeRef.current = null
@@ -732,7 +779,8 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         model: options.model,
         timeoutMs: options.timeoutMs ?? 15000,
         stream: true
-      })
+      }),
+      signal: options.signal
     })
 
     if (!response.ok) {
@@ -945,6 +993,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
     try {
       setFloatingMenu((prev) => ({ ...prev, chatResponse: '' }))
+      const controller = createStreamController(contextualStreamControllerRef)
 
       const streamed = await callGeminiStream({
         contents: [
@@ -970,6 +1019,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 8000,
+        signal: controller.signal,
         onText: (text) => {
           setFloatingMenu((prev) => ({ ...prev, chatResponse: cleanMarkdownStreamText(text) }))
         }
@@ -987,8 +1037,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       hideFloatingMenu()
       setError(null)
     } catch (err) {
+      if (isAbortError(err)) {
+        setContextualError('Edit stopped.')
+        return
+      }
+
       setContextualError(getErrorMessage(err, 'Edit failed. Try a shorter selection or specific add/replace/remove instruction.'))
     } finally {
+      if (contextualStreamControllerRef.current) {
+        contextualStreamControllerRef.current = null
+      }
       setIsEditingSelection(false)
     }
   }
@@ -1124,6 +1182,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     MANDATORY STRUCTURE: Header (Centered), Professional Summary (3-4 lines Framing), Education (GPA ${signals.gpa}, Test ${signals.testScores}), Experience (Action+Quant), Skills/Interests. 
     Logic: ${signals.structureInstructions}. 
     Return only the final CV in clean markdown with no JSON and no commentary.`
+    const controller = createStreamController(cvStreamControllerRef)
 
     try {
       const streamed = await callGeminiStream({
@@ -1133,6 +1192,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 18000,
+        signal: controller.signal,
         onText: (text) => {
           setOptimizedCv(cleanMarkdownStreamText(text))
         }
@@ -1151,8 +1211,13 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         outputText: cleanedCv
       })
     } catch (err) {
+      if (isAbortError(err)) {
+        return
+      }
+
       setError(getErrorMessage(err, 'Generation failed.'))
     } finally {
+      releaseStreamController(cvStreamControllerRef, controller)
       setIsGenerating(false)
     }
   }
@@ -1165,6 +1230,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setActiveTab('coverletter')
     setCoverLetter('')
     const letterPrompt = `Create a matching cover letter for this high-stakes finance role. Limit to 350 words. Format in clean markdown. No artifacts (***).`
+    const controller = createStreamController(coverLetterStreamControllerRef)
 
     try {
       const streamed = await callGeminiStream({
@@ -1174,6 +1240,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 12000,
+        signal: controller.signal,
         onText: (text) => {
           setCoverLetter(cleanMarkdownStreamText(text))
         }
@@ -1193,8 +1260,13 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         outputText: generatedLetter
       })
     } catch (err) {
+      if (isAbortError(err)) {
+        return
+      }
+
       setError(getErrorMessage(err, 'Letter generation failed.'))
     } finally {
+      releaseStreamController(coverLetterStreamControllerRef, controller)
       setIsGeneratingLetter(false)
     }
   }
@@ -1542,13 +1614,22 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           </div>
 
           <div className="flex flex-col gap-3 pb-8">
-            <button
-              onClick={generateTailoredCV}
-              disabled={isGenerating || !cvText || !jobDescription}
-              className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 transition-all"
-            >
-              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />} Rewrite CV & Score Fit
-            </button>
+            {isGenerating ? (
+              <button
+                onClick={stopCvGeneration}
+                className="w-full py-4 rounded-xl bg-rose-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-rose-700 flex items-center justify-center gap-2 transition-all"
+              >
+                <X className="w-4 h-4" /> Stop Generating
+              </button>
+            ) : (
+              <button
+                onClick={generateTailoredCV}
+                disabled={!cvText || !jobDescription}
+                className="w-full py-4 rounded-xl bg-blue-600 text-white font-bold uppercase text-[11px] tracking-widest shadow-md hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 flex items-center justify-center gap-2 transition-all"
+              >
+                <Wand2 className="w-4 h-4" /> Rewrite CV & Score Fit
+              </button>
+            )}
             <button
               onClick={() => {
                 setActiveTab('portfolio')
@@ -1610,6 +1691,22 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   </div>
                 )}
                 <div className="flex items-center gap-2 ml-auto">
+                  {isGenerating && activeTab === 'output' && (
+                    <button
+                      onClick={stopCvGeneration}
+                      className="px-3 py-2 bg-rose-600 hover:bg-rose-700 border border-rose-600 rounded-lg text-white transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide flex items-center gap-2"
+                    >
+                      <X className="w-4 h-4" /> Stop
+                    </button>
+                  )}
+                  {isGeneratingLetter && activeTab === 'coverletter' && (
+                    <button
+                      onClick={stopCoverLetterGeneration}
+                      className="px-3 py-2 bg-rose-600 hover:bg-rose-700 border border-rose-600 rounded-lg text-white transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide flex items-center gap-2"
+                    >
+                      <X className="w-4 h-4" /> Stop
+                    </button>
+                  )}
                   <button
                     onClick={() => setIsPreviewExpanded(!isPreviewExpanded)}
                     className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm"
@@ -1647,17 +1744,18 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   )}
                   {activeTab === 'coverletter' && coverLetter && (
                     <button
-                      onClick={generateCoverLetter}
-                      disabled={isGeneratingLetter}
+                      onClick={isGeneratingLetter ? stopCoverLetterGeneration : generateCoverLetter}
                       className={`px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wide transition-all border flex items-center gap-2 ${
-                        isCoverLetterOutOfSync
-                          ? 'animate-pulse-glow bg-blue-600 text-white border-blue-600 shadow-lg'
-                          : 'hover:bg-slate-200 bg-white border-slate-200 text-slate-700 shadow-sm'
+                        isGeneratingLetter
+                          ? 'bg-rose-600 text-white border-rose-600 shadow-lg hover:bg-rose-700'
+                          : isCoverLetterOutOfSync
+                            ? 'animate-pulse-glow bg-blue-600 text-white border-blue-600 shadow-lg'
+                            : 'hover:bg-slate-200 bg-white border-slate-200 text-slate-700 shadow-sm'
                       }`}
-                      title={isCoverLetterOutOfSync ? 'Refresh cover letter to match updated CV' : 'Refresh cover letter'}
+                      title={isGeneratingLetter ? 'Stop cover letter generation' : isCoverLetterOutOfSync ? 'Refresh cover letter to match updated CV' : 'Refresh cover letter'}
                     >
-                      {isGeneratingLetter ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-                      Refresh
+                      {isGeneratingLetter ? <X className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
+                      {isGeneratingLetter ? 'Stop' : 'Refresh'}
                     </button>
                   )}
                   {isManualEditing && (
@@ -1819,12 +1917,17 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                     <FileSignature className="w-12 h-12 text-slate-300 mb-4" />
                     <button
                       onClick={() => {
-                        generateCoverLetter()
+                        if (isGeneratingLetter) {
+                          stopCoverLetterGeneration()
+                        } else {
+                          generateCoverLetter()
+                        }
                       }}
-                      disabled={isGeneratingLetter}
-                      className="px-6 py-3 bg-zinc-900 text-white rounded-xl font-bold uppercase text-[10px] tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all hover:bg-zinc-800"
+                      className={`px-6 py-3 rounded-xl font-bold uppercase text-[10px] tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all ${
+                        isGeneratingLetter ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-zinc-900 text-white hover:bg-zinc-800'
+                      }`}
                     >
-                      {isGeneratingLetter ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Draft Cover Letter
+                      {isGeneratingLetter ? <X className="w-4 h-4" /> : <Send className="w-4 h-4" />} {isGeneratingLetter ? 'Stop Generation' : 'Draft Cover Letter'}
                     </button>
                   </div>
                 )}
@@ -1935,6 +2038,19 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
                         />
+                        {floatingMenu.mode === 'edit' && isEditingSelection && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              stopContextualEdit()
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="bg-rose-600 hover:bg-rose-700 p-2 rounded-xl text-white shadow-sm transition-all flex items-center justify-center"
+                            title="Stop edit"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
