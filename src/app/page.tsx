@@ -275,6 +275,7 @@ export default function CVMasterPro() {
   const [coverLetterSummary, setCoverLetterSummary] = useState<GenerationSummary | null>(null)
   const [isSummarizingCv, setIsSummarizingCv] = useState(false)
   const [isSummarizingCoverLetter, setIsSummarizingCoverLetter] = useState(false)
+  const [isScoringFit, setIsScoringFit] = useState(false)
   const [generationStatus, setGenerationStatus] = useState<string | null>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const manualEditorRef = useRef<HTMLDivElement>(null)
@@ -916,18 +917,25 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   }
 
   const generateFitAnalysis = async (generatedCv: string) => {
+    setIsScoringFit(true)
+
     try {
       const data = await callGemini({
         contents: [{ parts: [{ text: `Tailored CV:\n${generatedCv}\n\nJob Description:\n${jobDescription}` }] }],
         systemInstruction: {
           parts: [{
-            text: 'Assess fit between the tailored CV and the job description. Return JSON exactly in this shape: {"score": 0, "reasons": [], "missing": []}. Score must be 0-100 and arrays should each contain 2-4 short items.'
+            text: 'Assess fit between the tailored CV and the job description. Return JSON exactly in this shape: {"score": 0, "reasons": [], "missing": [], "improvements": []}. Score must be 0-100 and arrays should each contain 2-4 short items.'
           }]
         },
         generationConfig: { responseMimeType: 'application/json' }
+      }, {
+        model: 'gemini-2.5-flash',
+        timeoutMs: 45000,
+        cacheTtlMs: 0,
+        bypassCache: true
       })
 
-      const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || '{}')
+      const parsed = parseJsonResponse(data.candidates?.[0]?.content?.parts?.[0]?.text) || {}
       setFitAnalysis({
         score: typeof parsed.score === 'number' ? parsed.score : 0,
         reasons: Array.isArray(parsed.reasons) ? parsed.reasons : [],
@@ -941,6 +949,8 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     } catch (err) {
       console.error('Failed to generate fit analysis', err)
       setFitAnalysis(null)
+    } finally {
+      setIsScoringFit(false)
     }
   }
 
@@ -1242,14 +1252,14 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     
     MANDATORY STRUCTURE: Header (Centered), Professional Summary (3-4 lines Framing), Education (GPA ${signals.gpa}, Test ${signals.testScores}), Experience (Action+Quant), Skills/Interests. 
     Logic: ${signals.structureInstructions}. 
-    Perform fit analysis. Return JSON exactly in this shape: {"cv":"...","score":0,"reasons":["..."],"missing":["..."],"improvements":["..."]}. Keep reasons, missing, and improvements to 2-4 short items each.`
+    Return ONLY the final CV markdown (no JSON, no commentary).`
     const controller = createStreamController(cvStreamControllerRef)
 
     try {
       const data = await callGemini({
         contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: prompt }] },
-        generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 1800 }
+        generationConfig: { temperature: 0.2, maxOutputTokens: 1800 }
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 60000,
@@ -1258,20 +1268,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         bypassCache: true
       })
       const rawResponseText = extractGeminiText(data)
-      const parsed = parseJsonResponse(rawResponseText)
-
-      let cleanedCv = cleanMarkdownStreamText(
-        pickFirstString(
-          parsed?.cv,
-          parsed?.optimizedCv,
-          parsed?.tailoredCv,
-          parsed?.tailored_cv,
-          parsed?.resume,
-          parsed?.output,
-          parsed?.data?.cv,
-          rawResponseText.startsWith('{') ? '' : rawResponseText
-        )
-      ).trim()
+      let cleanedCv = cleanMarkdownStreamText(rawResponseText).trim()
 
       if (!cleanedCv) {
         setGenerationStatus('Retrying CV generation with strict markdown output...')
@@ -1301,22 +1298,9 @@ Return ONLY the final CV markdown. Do not return JSON.`
       }
 
       setOptimizedCv(cleanedCv)
-      setFitAnalysis({
-        score: typeof parsed?.score === 'number' ? parsed.score : 0,
-        reasons: Array.isArray(parsed?.reasons) ? parsed.reasons : [],
-        missing: Array.isArray(parsed?.missing) ? parsed.missing : [],
-        improvements: Array.isArray(parsed?.improvements)
-          ? parsed.improvements
-          : Array.isArray(parsed?.missing)
-            ? parsed.missing
-            : []
-      })
       setActiveTab('output')
-
-      if (typeof parsed?.score !== 'number') {
-        setGenerationStatus('Scoring fit...')
-        await generateFitAnalysis(cleanedCv)
-      }
+      setGenerationStatus('Scoring fit...')
+      await generateFitAnalysis(cleanedCv)
 
       setGenerationStatus('Preparing explanation...')
       await generateArtifactSummary({
@@ -1941,7 +1925,7 @@ Return ONLY the final CV markdown. Do not return JSON.`
                 </div>
               </div>
 
-              {activeTab === 'output' && fitAnalysis && fitAnalysis.score < 95 && (
+              {activeTab === 'output' && fitAnalysis && !isScoringFit && fitAnalysis.score < 95 && (
                 <div className="px-5 py-4 bg-amber-50 border-b border-amber-200 shrink-0">
                   <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-amber-700 mb-3">
                     <AlertCircle className="w-3.5 h-3.5" />
