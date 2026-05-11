@@ -116,6 +116,13 @@ interface PortfolioStrategy {
   }
 }
 
+interface GenerationSummary {
+  headline: string
+  changes: string[]
+  structure: string[]
+  why: string[]
+}
+
 const signalFieldKeys = ['gpa', 'testScores', 'cfaStatus'] as const
 
 const getErrorMessage = (error: unknown, fallback: string) => {
@@ -135,7 +142,7 @@ export default function CVMasterPro() {
   const [isGeneratingLetter, setIsGeneratingLetter] = useState(false)
   const [isStrategizing, setIsStrategizing] = useState(false)
   const [isReadingFile, setIsReadingFile] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copiedTarget, setCopiedTarget] = useState<'output' | 'coverletter' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'input' | 'output' | 'coverletter' | 'portfolio'>('input')
   const [fontSize, setFontSize] = useState(10)
@@ -161,9 +168,14 @@ export default function CVMasterPro() {
   const [isEditingSelection, setIsEditingSelection] = useState(false)
   const [isAsking, setIsAsking] = useState(false)
   const [isGeneratingChips, setIsGeneratingChips] = useState(false)
+  const [cvSummary, setCvSummary] = useState<GenerationSummary | null>(null)
+  const [coverLetterSummary, setCoverLetterSummary] = useState<GenerationSummary | null>(null)
+  const [isSummarizingCv, setIsSummarizingCv] = useState(false)
+  const [isSummarizingCoverLetter, setIsSummarizingCoverLetter] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
   const manualEditorRef = useRef<HTMLDivElement>(null)
   const manualHtmlRef = useRef('')
+  const selectionRangeRef = useRef<Range | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [optimizationMode, setOptimizationMode] = useState('finance')
   const [signals, setSignals] = useState<Signals>({
@@ -242,7 +254,18 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   useEffect(() => {
     setIsManualEditing(false)
     setManualDraft('')
+    clearSelectionHighlight()
   }, [activeTab])
+
+  useEffect(() => {
+    if (!copiedTarget) return
+
+    const timeoutId = window.setTimeout(() => {
+      setCopiedTarget(null)
+    }, 1800)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [copiedTarget])
 
   useEffect(() => {
     if (!isManualEditing || !manualEditorRef.current) return
@@ -274,8 +297,43 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   }, [isManualEditing, historyIndex, editHistory])
 
   const clearSelectionHighlight = () => {
+    selectionRangeRef.current = null
+
+    const cssApi = CSS as typeof CSS & {
+      highlights?: {
+        delete: (name: string) => void
+      }
+    }
+
+    cssApi.highlights?.delete('context-selection')
+
     const selection = window.getSelection()
     selection?.removeAllRanges()
+  }
+
+  const applySelectionHighlight = (range: Range) => {
+    selectionRangeRef.current = range.cloneRange()
+
+    const cssApi = CSS as typeof CSS & {
+      highlights?: {
+        set: (name: string, highlight: unknown) => void
+        delete: (name: string) => void
+      }
+    }
+    const highlightConstructor = (window as Window & {
+      Highlight?: new (...ranges: Range[]) => unknown
+    }).Highlight
+
+    cssApi.highlights?.delete('context-selection')
+
+    if (cssApi.highlights && highlightConstructor) {
+      cssApi.highlights.set('context-selection', new highlightConstructor(range.cloneRange()))
+      return
+    }
+
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range.cloneRange())
   }
 
   const normalizeForMatch = (value: string) =>
@@ -305,13 +363,41 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     return lines.find((line) => normalizeForMatch(line).includes(normalizedSelection)) || null
   }
 
+  const getActiveDocumentMarkdown = () => {
+    if (isManualEditing) {
+      return htmlToMarkdown(manualEditorRef.current?.innerHTML || manualHtmlRef.current || manualDraft)
+    }
+
+    return activeTab === 'output' ? optimizedCv : coverLetter
+  }
+
+  const hideFloatingMenu = () => {
+    setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
+    clearSelectionHighlight()
+  }
+
+  const copyActiveBody = async () => {
+    const activeKey = activeTab === 'output' ? 'output' : 'coverletter'
+    const bodyText = getProcessedText(getActiveDocumentMarkdown())
+    if (!bodyText) return
+
+    try {
+      await navigator.clipboard.writeText(bodyText)
+      setCopiedTarget(activeKey)
+    } catch (err) {
+      setError(getErrorMessage(err, 'Copy failed.'))
+    }
+  }
+
   const handleTextSelection = () => {
     const selection = window.getSelection()
     const text = selection?.toString().trim()
     const isInPreview = previewRef.current && selection?.anchorNode && previewRef.current.contains(selection.anchorNode)
     const isInManual = manualEditorRef.current && selection?.anchorNode && manualEditorRef.current.contains(selection.anchorNode)
 
-    if (text && (isInPreview || isInManual)) {
+    if (text && (isInPreview || isInManual) && selection?.rangeCount) {
+      applySelectionHighlight(selection.getRangeAt(0).cloneRange())
+
       setFloatingMenu((prev) => ({
         ...prev,
         visible: true,
@@ -319,10 +405,6 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         chatResponse: prev.text !== text ? null : prev.chatResponse,
         chips: prev.text !== text ? [] : prev.chips
       }))
-
-      requestAnimationFrame(() => {
-        clearSelectionHighlight()
-      })
     }
   }
 
@@ -336,7 +418,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const html = renderPreviewHtml(getProcessedText(activeDoc))
     setManualDraft(html)
     manualHtmlRef.current = html
-    setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
+    hideFloatingMenu()
     setIsManualEditing(true)
     // Initialize history when entering manual edit mode
     setEditHistory([html])
@@ -396,6 +478,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsManualEditing(false)
     setManualDraft('')
     manualHtmlRef.current = ''
+    clearSelectionHighlight()
   }
 
   const handlePreviewTap = () => {
@@ -451,6 +534,55 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     return data
   }
 
+  const generateArtifactSummary = async ({
+    artifactType,
+    sourceText,
+    outputText
+  }: {
+    artifactType: 'cv' | 'coverletter'
+    sourceText: string
+    outputText: string
+  }) => {
+    const setLoading = artifactType === 'cv' ? setIsSummarizingCv : setIsSummarizingCoverLetter
+    const setSummary = artifactType === 'cv' ? setCvSummary : setCoverLetterSummary
+
+    setLoading(true)
+
+    try {
+      const data = await callGemini({
+        contents: [
+          {
+            parts: [
+              {
+                text: `Job Description:\n${jobDescription}\n\nOriginal Source:\n${sourceText}\n\nGenerated ${artifactType === 'cv' ? 'CV' : 'Cover Letter'}:\n${outputText}`
+              }
+            ]
+          }
+        ],
+        systemInstruction: {
+          parts: [
+            {
+              text: `Explain the generated ${artifactType === 'cv' ? 'CV' : 'cover letter'} to the user in concise plain English. Return JSON in this exact shape: {"headline":"...","changes":["..."],"structure":["..."],"why":["..."]}. Keep each array to 2-4 short items focused on what changed, how it is structured, and why those choices help.`
+            }
+          ]
+        },
+        generationConfig: { responseMimeType: 'application/json' }
+      })
+
+      const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || '{}')
+      setSummary({
+        headline: typeof parsed.headline === 'string' ? parsed.headline : artifactType === 'cv' ? 'CV rewrite summary' : 'Cover letter summary',
+        changes: Array.isArray(parsed.changes) ? parsed.changes : [],
+        structure: Array.isArray(parsed.structure) ? parsed.structure : [],
+        why: Array.isArray(parsed.why) ? parsed.why : []
+      })
+    } catch (err) {
+      console.error(`Failed to summarize ${artifactType}`, err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const askContextualQuestion = async () => {
     if (!floatingMenu.text || !floatingMenu.prompt) return
     setIsAsking(true)
@@ -486,11 +618,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsEditingSelection(true)
     if (overridePrompt) setFloatingMenu((prev) => ({ ...prev, prompt: activePrompt, mode: 'edit' }))
 
-    const activeDocumentText = isManualEditing
-      ? htmlToMarkdown(manualEditorRef.current?.innerHTML || manualHtmlRef.current || manualDraft)
-      : activeTab === 'output'
-        ? optimizedCv
-        : coverLetter
+    const activeDocumentText = getActiveDocumentMarkdown()
     const matchedSection = findMatchingMarkdownSection(activeDocumentText, floatingMenu.text)
 
     if (!matchedSection) {
@@ -538,8 +666,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           setCoverLetter(updatedDocument)
         }
 
-        setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
-        clearSelectionHighlight()
+        hideFloatingMenu()
       }
     } catch (err) {
       setError(getErrorMessage(err, 'Edit failed.'))
@@ -682,9 +809,15 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         generationConfig: { responseMimeType: 'application/json' }
       })
       const res = JSON.parse(resData.candidates[0].content.parts[0].text)
-      setOptimizedCv(res.cv.replace(/\*\*\*/g, ''))
+      const cleanedCv = res.cv.replace(/\*\*\*/g, '')
+      setOptimizedCv(cleanedCv)
       setFitAnalysis({ score: res.score, reasons: res.reasons, missing: res.missing })
       setActiveTab('output')
+      void generateArtifactSummary({
+        artifactType: 'cv',
+        sourceText: cvText,
+        outputText: cleanedCv
+      })
     } catch (err) {
       setError(getErrorMessage(err, 'Generation failed.'))
     } finally {
@@ -702,10 +835,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         contents: [{ parts: [{ text: `CV: ${optimizedCv}\nJOB: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: letterPrompt }] }
       })
-      setCoverLetter(data.candidates?.[0]?.content?.parts?.[0]?.text?.replace(/\*\*\*/g, '') || '')
+      const generatedLetter = data.candidates?.[0]?.content?.parts?.[0]?.text?.replace(/\*\*\*/g, '') || ''
+      setCoverLetter(generatedLetter)
       setCoverLetterGeneratedAt(Date.now())
       setIsCoverLetterOutOfSync(false)
       setActiveTab('coverletter')
+      void generateArtifactSummary({
+        artifactType: 'coverletter',
+        sourceText: optimizedCv,
+        outputText: generatedLetter
+      })
     } catch (err) {
       setError(getErrorMessage(err, 'Letter generation failed.'))
     } finally {
@@ -905,6 +1044,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     if (!text) return ''
     return removeEmDashes ? text.replace(/—|–/g, '-') : text
   }
+
+  const activeSummary = activeTab === 'output' ? cvSummary : activeTab === 'coverletter' ? coverLetterSummary : null
+  const isSummaryLoading = activeTab === 'output' ? isSummarizingCv : activeTab === 'coverletter' ? isSummarizingCoverLetter : false
+  const copyLabel = activeTab === 'output' ? 'CV' : 'Cover Letter'
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.14),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(148,163,184,0.18),_transparent_24%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_45%,_#f8fafc_100%)] text-slate-900 font-sans selection:bg-blue-100 relative">
@@ -1174,6 +1317,16 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                       Cancel
                     </button>
                   )}
+                  {(activeTab === 'output' || activeTab === 'coverletter') && (
+                    <button
+                      onClick={copyActiveBody}
+                      className="px-3 py-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-700 transition-all shadow-sm text-[10px] font-bold uppercase tracking-wide flex items-center gap-2"
+                      title={`Copy ${copyLabel} body`}
+                    >
+                      {copiedTarget === activeTab ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                      {copiedTarget === activeTab ? 'Copied' : 'Copy Body'}
+                    </button>
+                  )}
                   <button
                     onClick={saveCurrentProfile}
                     className="p-2 hover:bg-slate-200 bg-white border border-slate-200 rounded-lg text-slate-600 transition-all shadow-sm"
@@ -1221,6 +1374,51 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   Tap once to edit. Select text for AI.
                 </div>
               </div>
+
+              {(isSummaryLoading || activeSummary) && (activeTab === 'output' || activeTab === 'coverletter') && (
+                <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 shrink-0">
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-slate-500 mb-3">
+                    <Lightbulb className="w-3.5 h-3.5 text-amber-500" />
+                    What Changed And Why
+                  </div>
+
+                  {isSummaryLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-500">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Preparing explanation...
+                    </div>
+                  ) : activeSummary ? (
+                    <div className="space-y-3">
+                      <p className="text-sm font-semibold text-slate-800">{activeSummary.headline}</p>
+                      <div className="grid gap-3 md:grid-cols-3">
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-600 mb-2">Changes</div>
+                          <ul className="space-y-1.5 text-xs text-slate-600">
+                            {activeSummary.changes.map((item, index) => (
+                              <li key={index}>• {item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-600 mb-2">Structure</div>
+                          <ul className="space-y-1.5 text-xs text-slate-600">
+                            {activeSummary.structure.map((item, index) => (
+                              <li key={index}>• {item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-600 mb-2">Why</div>
+                          <ul className="space-y-1.5 text-xs text-slate-600">
+                            {activeSummary.why.map((item, index) => (
+                              <li key={index}>• {item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
 
               <div className="flex-1 overflow-y-auto p-8 bg-slate-100/50 shadow-inner relative group">
                 {isManualEditing ? (
@@ -1316,21 +1514,17 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                         </button>
                       </div>
                       <button
-                        onClick={() =>
-                          setFloatingMenu({
-                            visible: false,
-                            text: '',
-                            prompt: '',
-                            mode: 'edit',
-                            chatResponse: null,
-                            chips: []
-                          })
-                        }
+                        onClick={hideFloatingMenu}
                         onMouseDown={(e) => e.stopPropagation()}
                         className="text-slate-400 hover:text-slate-600 transition-colors p-1"
                       >
                         <X className="w-4 h-4" />
                       </button>
+                    </div>
+
+                    <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-600 mb-1">Selected Text</div>
+                      <p className="text-xs text-slate-700 leading-relaxed">{floatingMenu.text}</p>
                     </div>
 
                     {floatingMenu.mode === 'emphasize' && (

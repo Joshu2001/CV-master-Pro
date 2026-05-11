@@ -53,3 +53,8 @@ code {
 .animate-pulse-glow {
   animation: pulse-glow 2s infinite;
 }
+
+::highlight(context-selection) {
+  background: rgba(96, 165, 250, 0.35);
+  color: inherit;
+}
