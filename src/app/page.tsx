@@ -1751,21 +1751,11 @@ Return ONLY the final CV markdown. Do not return JSON.`
             </button>
             {(isGenerating || isGeneratingLetter || isSummarizingCv || isSummarizingCoverLetter) && generationStatus && (
               <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-blue-700">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generation In Progress
-                    </div>
-                    <p className="mt-1 text-xs text-slate-700 leading-relaxed">{generationStatus}</p>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.18em] text-blue-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Generation In Progress
                   </div>
-                  {(isGeneratingLetter || (isGenerating && generationStatus?.toLowerCase().includes('rewriting'))) && (
-                    <button
-                      onClick={isGeneratingLetter ? stopCoverLetterGeneration : stopCvGeneration}
-                      className="shrink-0 rounded-lg bg-rose-600 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-white shadow-sm transition-all hover:bg-rose-700"
-                    >
-                      Stop
-                    </button>
-                  )}
+                  <p className="mt-1 text-xs text-slate-700 leading-relaxed">{generationStatus}</p>
                 </div>
               </div>
             )}
@@ -2182,19 +2172,6 @@ Return ONLY the final CV markdown. Do not return JSON.`
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
                         />
-                        {floatingMenu.mode === 'edit' && isEditingSelection && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              stopContextualEdit()
-                            }}
-                            onMouseDown={(e) => e.stopPropagation()}
-                            className="bg-rose-600 hover:bg-rose-700 p-2 rounded-xl text-white shadow-sm transition-all flex items-center justify-center"
-                            title="Stop edit"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
