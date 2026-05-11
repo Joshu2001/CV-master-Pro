@@ -1241,8 +1241,6 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setCvSummary(null)
     setFitAnalysis(null)
     setGenerationStatus('Rewriting CV draft...')
-    setActiveTab('output')
-    setOptimizedCv('')
     const prompt = `Elite IB Resume Expert. Rules: Strictly one page. No artifacts (***).
     
     MANDATORY FORMATTING:
