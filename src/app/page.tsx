@@ -273,6 +273,38 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isManualEditing, historyIndex, editHistory])
 
+  const clearSelectionHighlight = () => {
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+  }
+
+  const normalizeForMatch = (value: string) =>
+    value
+      .replace(/[*_#>`-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+
+  const findMatchingMarkdownSection = (documentText: string, selectedText: string) => {
+    const normalizedSelection = normalizeForMatch(selectedText)
+    if (!normalizedSelection) return null
+
+    const blocks = documentText
+      .split(/\n{2,}/)
+      .map((block) => block.trim())
+      .filter(Boolean)
+
+    const exactBlockMatch = blocks.find((block) => normalizeForMatch(block).includes(normalizedSelection))
+    if (exactBlockMatch) return exactBlockMatch
+
+    const lines = documentText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+
+    return lines.find((line) => normalizeForMatch(line).includes(normalizedSelection)) || null
+  }
+
   const handleTextSelection = () => {
     const selection = window.getSelection()
     const text = selection?.toString().trim()
@@ -280,12 +312,6 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     const isInManual = manualEditorRef.current && selection?.anchorNode && manualEditorRef.current.contains(selection.anchorNode)
 
     if (text && (isInPreview || isInManual)) {
-      // Preserve the selection state
-      let range: Range | null = null
-      if (selection && selection.rangeCount > 0) {
-        range = selection.getRangeAt(0).cloneRange()
-      }
-
       setFloatingMenu((prev) => ({
         ...prev,
         visible: true,
@@ -293,6 +319,10 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         chatResponse: prev.text !== text ? null : prev.chatResponse,
         chips: prev.text !== text ? [] : prev.chips
       }))
+
+      requestAnimationFrame(() => {
+        clearSelectionHighlight()
+      })
     }
   }
 
@@ -456,7 +486,18 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     setIsEditingSelection(true)
     if (overridePrompt) setFloatingMenu((prev) => ({ ...prev, prompt: activePrompt, mode: 'edit' }))
 
-    const activeDocumentText = activeTab === 'output' ? optimizedCv : coverLetter
+    const activeDocumentText = isManualEditing
+      ? htmlToMarkdown(manualEditorRef.current?.innerHTML || manualHtmlRef.current || manualDraft)
+      : activeTab === 'output'
+        ? optimizedCv
+        : coverLetter
+    const matchedSection = findMatchingMarkdownSection(activeDocumentText, floatingMenu.text)
+
+    if (!matchedSection) {
+      setError('Could not locate the selected section to edit.')
+      setIsEditingSelection(false)
+      return
+    }
 
     try {
       const data = await callGemini({
@@ -464,7 +505,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
           {
             parts: [
               {
-                text: `Instruction: ${activePrompt}\nSelected Text: "${floatingMenu.text}"\nFull Document:\n${activeDocumentText}`
+                text: `Instruction: ${activePrompt}\nSelected Text: "${floatingMenu.text}"\nMarkdown Section To Rewrite:\n${matchedSection}`
               }
             ]
           }
@@ -472,27 +513,33 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         systemInstruction: {
           parts: [
             {
-              text: `You are a precise markdown editor. Your task:
-1. Find the section in the document that contains or matches the selected text
-2. The selected text may be plain text while the document has markdown formatting (bold, italic, etc)
-3. Rewrite ONLY that found markdown section based on the instruction
-4. Maintain strict professional formatting (use **bold** for titles/companies)
-5. Return JSON with "original_markdown" (exact text from document to replace) and "new_markdown" (rewritten version)
-6. Be flexible in matching - the selected text might be part of a longer line or have formatting removed
-Example: if selected is "John Smith" and document has "**John Smith** | CEO", return the whole line in original_markdown`
+              text: 'Rewrite only the provided markdown section based on the instruction. Preserve markdown structure and professional formatting. Return JSON: {"rewritten_markdown": "..."}'
             }
           ]
         },
         generationConfig: { responseMimeType: 'application/json' }
       })
       const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text)
-      if (parsed.original_markdown && parsed.new_markdown) {
-        if (activeTab === 'output') {
-          setOptimizedCv((prev) => prev.replace(parsed.original_markdown, parsed.new_markdown))
+      if (parsed.rewritten_markdown) {
+        const updatedDocument = activeDocumentText.replace(matchedSection, parsed.rewritten_markdown)
+
+        if (isManualEditing) {
+          const updatedHtml = renderPreviewHtml(getProcessedText(updatedDocument))
+          setManualDraft(updatedHtml)
+          manualHtmlRef.current = updatedHtml
+          if (manualEditorRef.current) {
+            manualEditorRef.current.innerHTML = updatedHtml
+          }
+          setEditHistory((prev) => [...prev.slice(0, historyIndex + 1), updatedHtml])
+          setHistoryIndex((prev) => prev + 1)
+        } else if (activeTab === 'output') {
+          setOptimizedCv(updatedDocument)
         } else {
-          setCoverLetter((prev) => prev.replace(parsed.original_markdown, parsed.new_markdown))
+          setCoverLetter(updatedDocument)
         }
+
         setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
+        clearSelectionHighlight()
       }
     } catch (err) {
       setError(getErrorMessage(err, 'Edit failed.'))
