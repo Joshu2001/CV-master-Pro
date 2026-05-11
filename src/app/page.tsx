@@ -111,6 +111,7 @@ interface FitAnalysis {
   score: number
   reasons: string[]
   missing: string[]
+  improvements: string[]
 }
 
 interface PortfolioStrategy {
@@ -152,6 +153,20 @@ const parseJsonResponse = (value: string | undefined) => {
   try {
     return JSON.parse(value)
   } catch {
+    const fencedMatch = value.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    if (fencedMatch?.[1]) {
+      try {
+        return JSON.parse(fencedMatch[1].trim())
+      } catch {}
+    }
+
+    const objectMatch = value.match(/\{[\s\S]*\}/)
+    if (objectMatch?.[0]) {
+      try {
+        return JSON.parse(objectMatch[0])
+      } catch {}
+    }
+
     return null
   }
 }
@@ -898,7 +913,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
       setFitAnalysis({
         score: typeof parsed.score === 'number' ? parsed.score : 0,
         reasons: Array.isArray(parsed.reasons) ? parsed.reasons : [],
-        missing: Array.isArray(parsed.missing) ? parsed.missing : []
+        missing: Array.isArray(parsed.missing) ? parsed.missing : [],
+        improvements: Array.isArray(parsed.improvements)
+          ? parsed.improvements
+          : Array.isArray(parsed.missing)
+            ? parsed.missing
+            : []
       })
     } catch (err) {
       console.error('Failed to generate fit analysis', err)
@@ -1204,36 +1224,44 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
     
     MANDATORY STRUCTURE: Header (Centered), Professional Summary (3-4 lines Framing), Education (GPA ${signals.gpa}, Test ${signals.testScores}), Experience (Action+Quant), Skills/Interests. 
     Logic: ${signals.structureInstructions}. 
-    Return only the final CV in clean markdown with no JSON and no commentary.`
+    Perform fit analysis. Return JSON exactly in this shape: {"cv":"...","score":0,"reasons":["..."],"missing":["..."],"improvements":["..."]}. Keep reasons, missing, and improvements to 2-4 short items each.`
     const controller = createStreamController(cvStreamControllerRef)
 
     try {
       const data = await callGemini({
         contents: [{ parts: [{ text: `CV: ${cvText}\nJD: ${jobDescription}` }] }],
         systemInstruction: { parts: [{ text: prompt }] },
-        generationConfig: { temperature: 0.3, maxOutputTokens: 1400 }
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 1800 }
       }, {
         model: 'gemini-2.5-flash',
         timeoutMs: 60000,
         signal: controller.signal,
         cacheTtlMs: 0
       })
-      const cleanedCv = cleanMarkdownStreamText(extractGeminiText(data)).trim()
+      const parsed = parseJsonResponse(extractGeminiText(data))
+      const cleanedCv = cleanMarkdownStreamText(parsed?.cv || '').trim()
       if (!cleanedCv) {
         throw new Error('No CV content was generated.')
       }
 
       setOptimizedCv(cleanedCv)
+      setFitAnalysis({
+        score: typeof parsed?.score === 'number' ? parsed.score : 0,
+        reasons: Array.isArray(parsed?.reasons) ? parsed.reasons : [],
+        missing: Array.isArray(parsed?.missing) ? parsed.missing : [],
+        improvements: Array.isArray(parsed?.improvements)
+          ? parsed.improvements
+          : Array.isArray(parsed?.missing)
+            ? parsed.missing
+            : []
+      })
       setActiveTab('output')
-      setGenerationStatus('Scoring fit and preparing explanation...')
-      await Promise.all([
-        generateFitAnalysis(cleanedCv),
-        generateArtifactSummary({
-          artifactType: 'cv',
-          sourceText: cvText,
-          outputText: cleanedCv
-        })
-      ])
+      setGenerationStatus('Preparing explanation...')
+      await generateArtifactSummary({
+        artifactType: 'cv',
+        sourceText: cvText,
+        outputText: cleanedCv
+      })
     } catch (err) {
       if (isAbortError(err)) {
         return
@@ -1850,6 +1878,35 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                   Tap once to edit. Select text for AI.
                 </div>
               </div>
+
+              {activeTab === 'output' && fitAnalysis && fitAnalysis.score < 95 && (
+                <div className="px-5 py-4 bg-amber-50 border-b border-amber-200 shrink-0">
+                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-amber-700 mb-3">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Why The Fit Is Below 95%
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-xl border border-amber-200 bg-white p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700 mb-2">Why</div>
+                      <ul className="space-y-1.5 text-xs text-slate-700">
+                        {fitAnalysis.reasons.length > 0 ? fitAnalysis.reasons.map((item, index) => (
+                          <li key={index}>• {item}</li>
+                        )) : (
+                          <li>• The CV still needs stronger alignment to the job description.</li>
+                        )}
+                      </ul>
+                    </div>
+                    <div className="rounded-xl border border-amber-200 bg-white p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700 mb-2">How To Improve</div>
+                      <ul className="space-y-1.5 text-xs text-slate-700">
+                        {(fitAnalysis.improvements.length > 0 ? fitAnalysis.improvements : fitAnalysis.missing).map((item, index) => (
+                          <li key={index}>• {item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {(isSummaryLoading || activeSummary) && (activeTab === 'output' || activeTab === 'coverletter') && (
                 <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 shrink-0">
