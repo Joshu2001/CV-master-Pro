@@ -183,6 +183,7 @@ export default function CVMasterPro() {
   const [isEditingSelection, setIsEditingSelection] = useState(false)
   const [isAsking, setIsAsking] = useState(false)
   const [isGeneratingChips, setIsGeneratingChips] = useState(false)
+  const [contextualError, setContextualError] = useState<string | null>(null)
   const [cvSummary, setCvSummary] = useState<GenerationSummary | null>(null)
   const [coverLetterSummary, setCoverLetterSummary] = useState<GenerationSummary | null>(null)
   const [isSummarizingCv, setIsSummarizingCv] = useState(false)
@@ -388,7 +389,63 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
   const hideFloatingMenu = () => {
     setFloatingMenu({ visible: false, text: '', prompt: '', mode: 'edit', chatResponse: null, chips: [] })
+    setContextualError(null)
     clearSelectionHighlight()
+  }
+
+  const applyUpdatedDocument = (updatedDocument: string) => {
+    if (isManualEditing) {
+      const updatedHtml = renderPreviewHtml(getProcessedText(updatedDocument))
+      setManualDraft(updatedHtml)
+      manualHtmlRef.current = updatedHtml
+      if (manualEditorRef.current) {
+        manualEditorRef.current.innerHTML = updatedHtml
+      }
+      setEditHistory((prev) => [...prev.slice(0, historyIndex + 1), updatedHtml])
+      setHistoryIndex((prev) => prev + 1)
+      return
+    }
+
+    if (activeTab === 'output') {
+      setOptimizedCv(updatedDocument)
+    } else {
+      setCoverLetter(updatedDocument)
+    }
+  }
+
+  const applyLocalInstruction = (section: string, instruction: string) => {
+    const trimmedInstruction = instruction.trim()
+    const addMatch = trimmedInstruction.match(/^(add|append|include|insert)\s+(.+)$/i)
+    if (addMatch) {
+      const addition = addMatch[2].trim()
+      if (!addition) return null
+
+      if (section.includes(':') && !section.includes('\n')) {
+        const separator = /[:,;]\s*$/.test(section) ? ' ' : ', '
+        return `${section}${separator}${addition}`
+      }
+
+      if (section.startsWith('- ')) {
+        return `${section}; ${addition}`
+      }
+
+      return `${section}${section.endsWith('\n') ? '' : ' '}${addition}`
+    }
+
+    const replaceMatch = trimmedInstruction.match(/^replace\s+(.+?)\s+with\s+(.+)$/i)
+    if (replaceMatch) {
+      const target = replaceMatch[1].trim()
+      const replacement = replaceMatch[2].trim()
+      return section.includes(target) ? section.replace(target, replacement) : null
+    }
+
+    const removeMatch = trimmedInstruction.match(/^(remove|delete)\s+(.+)$/i)
+    if (removeMatch) {
+      const target = removeMatch[2].trim()
+      return section.includes(target) ? section.replace(target, '').replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').trim() : null
+    }
+
+    return null
   }
 
   const copyActiveBody = async () => {
@@ -412,6 +469,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
 
     if (text && (isInPreview || isInManual) && selection?.rangeCount) {
       applySelectionHighlight(selection.getRangeAt(0).cloneRange())
+      setContextualError(null)
 
       setFloatingMenu((prev) => ({
         ...prev,
@@ -605,6 +663,7 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const askContextualQuestion = async () => {
     if (!floatingMenu.text || !floatingMenu.prompt) return
     setIsAsking(true)
+    setContextualError(null)
     setFloatingMenu((prev) => ({ ...prev, chatResponse: null }))
     try {
       const data = await callGemini({
@@ -633,18 +692,28 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
   const applyContextualEdit = async (overridePrompt: string | null = null) => {
     const activePrompt = overridePrompt || floatingMenu.prompt
     if (!floatingMenu.text || !activePrompt?.trim()) {
-      setError('Add edit instructions before sending.')
+      setContextualError('Add edit instructions before sending.')
       return
     }
 
     setIsEditingSelection(true)
+    setContextualError(null)
     if (overridePrompt) setFloatingMenu((prev) => ({ ...prev, prompt: activePrompt, mode: 'edit' }))
 
     const activeDocumentText = getActiveDocumentMarkdown()
     const matchedSection = findMatchingMarkdownSection(activeDocumentText, floatingMenu.text)
 
     if (!matchedSection) {
-      setError('Could not locate the selected section to edit.')
+      setContextualError('Could not locate the selected section to edit.')
+      setIsEditingSelection(false)
+      return
+    }
+
+    const localRewrite = applyLocalInstruction(matchedSection, activePrompt)
+    if (localRewrite && localRewrite !== matchedSection) {
+      applyUpdatedDocument(activeDocumentText.replace(matchedSection, localRewrite))
+      hideFloatingMenu()
+      setError(null)
       setIsEditingSelection(false)
       return
     }
@@ -670,42 +739,28 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.2,
-          maxOutputTokens: 400
+          maxOutputTokens: 220
         }
       }, {
-        model: 'gemini-2.0-flash-lite',
-        timeoutMs: 8000
+        model: 'gemini-2.0-flash',
+        timeoutMs: 5000
       })
       const parsed = parseJsonResponse(data.candidates?.[0]?.content?.parts?.[0]?.text)
 
       if (!parsed?.rewritten_markdown || typeof parsed.rewritten_markdown !== 'string') {
-        setError('The edit request did not return a usable rewrite. Try a shorter instruction or smaller selection.')
+        setContextualError('No usable rewrite came back. Try a shorter instruction or a more specific command like add, replace, or remove.')
         return
       }
 
       if (parsed.rewritten_markdown) {
         const updatedDocument = activeDocumentText.replace(matchedSection, parsed.rewritten_markdown)
-
-        if (isManualEditing) {
-          const updatedHtml = renderPreviewHtml(getProcessedText(updatedDocument))
-          setManualDraft(updatedHtml)
-          manualHtmlRef.current = updatedHtml
-          if (manualEditorRef.current) {
-            manualEditorRef.current.innerHTML = updatedHtml
-          }
-          setEditHistory((prev) => [...prev.slice(0, historyIndex + 1), updatedHtml])
-          setHistoryIndex((prev) => prev + 1)
-        } else if (activeTab === 'output') {
-          setOptimizedCv(updatedDocument)
-        } else {
-          setCoverLetter(updatedDocument)
-        }
+        applyUpdatedDocument(updatedDocument)
 
         hideFloatingMenu()
         setError(null)
       }
     } catch (err) {
-      setError(getErrorMessage(err, 'Edit failed. Try a shorter selection or instruction.'))
+      setContextualError(getErrorMessage(err, 'Edit failed. Try a shorter selection or specific add/replace/remove instruction.'))
     } finally {
       setIsEditingSelection(false)
     }
@@ -1566,6 +1621,12 @@ STRUCTURE: Strictly 1-page. Header (Centered), Professional Summary (3-4 lines F
                       <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-blue-600 mb-1">Selected Text</div>
                       <p className="text-xs text-slate-700 leading-relaxed">{floatingMenu.text}</p>
                     </div>
+
+                    {contextualError && floatingMenu.mode === 'edit' && (
+                      <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                        {contextualError}
+                      </div>
+                    )}
 
                     {floatingMenu.mode === 'emphasize' && (
                       <div className="mb-3">
